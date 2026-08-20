@@ -1,0 +1,54 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;750&family=JetBrains+Mono:wght@400;500;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+@media print {
+  .no-print,
+  #dashboard-tab-navigation,
+  aside,
+  header,
+  nav,
+  button,
+  select,
+  input,
+  .no-print * {
+    display: none !important;
+  }
+  
+  body, main, #root {
+    background: white !important;
+    color: black !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+  
+  .print-card {
+    border: 1px solid #cbd5e1 !important;
+    box-shadow: none !important;
+    page-break-inside: avoid;
+    background: white !important;
+    color: black !important;
+  }
+
+  /* Make charts fit page */
+  .recharts-responsive-container {
+    width: 100% !important;
+    height: 250px !important;
+  }
+  
+  .print-only {
+    display: block !important;
+  }
+}
+
+.print-only {
+  display: none;
+}
+
