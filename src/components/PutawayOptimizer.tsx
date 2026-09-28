@@ -8,7 +8,7 @@ interface PutawayOptimizerProps {
   onCommitPutaway: (assignments: { sku: string; qty: number; binId: string }[]) => Promise<void>;
 }
 
-interface AIResponse {
+interface PutawayPlanResponse {
   assignments: {
     sku: string;
     qty: number;
@@ -28,11 +28,11 @@ export const PutawayOptimizer: React.FC<PutawayOptimizerProps> = ({
   const [sku, setSku] = useState('');
   const [quantity, setQuantity] = useState<number>(10);
   const [isOptimizing, setIsOptimizing] = useState(false);
-  const [aiPlan, setAiPlan] = useState<AIResponse | null>(null);
+  const [putawayPlan, setPutawayPlan] = useState<PutawayPlanResponse | null>(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
-  const handleAISuggest = async (e: React.FormEvent) => {
+  const handleCalculatePutaway = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!sku) {
       setErrorMsg('Por favor, seleccione o ingrese un SKU válido');
@@ -44,7 +44,7 @@ export const PutawayOptimizer: React.FC<PutawayOptimizerProps> = ({
     }
 
     setIsOptimizing(true);
-    setAiPlan(null);
+    setPutawayPlan(null);
     setErrorMsg('');
 
     // Simulate standard deterministic delay to feel calculated and premium
@@ -106,7 +106,7 @@ export const PutawayOptimizer: React.FC<PutawayOptimizerProps> = ({
         reasoningText = `Asignación óptima en la celda libre ${bestBin.id} (Pasillo ${bestBin.aisle}) según criterios heurísticos estándar de cercanía.`;
       }
 
-      const planData: AIResponse = {
+      const planData: PutawayPlanResponse = {
         assignments: [{
           sku,
           qty: quantity,
@@ -116,7 +116,7 @@ export const PutawayOptimizer: React.FC<PutawayOptimizerProps> = ({
         logisticalReasoning: `El motor de slotting heurístico determinó que la celda ${bestBin.id} es el destino idóneo para las ${quantity} unidades de ${sku}. La asignación prioriza la seguridad estructural (considerando el peso unitario de ${unitWeight} kg) y la consolidación de inventario para minimizar la fragmentación de espacio en los pasillos.`
       };
 
-      setAiPlan(planData);
+      setPutawayPlan(planData);
     } catch (error: any) {
       console.error(error);
       setErrorMsg(error.message || 'Ocurrió un error al calcular la ubicación óptima.');
@@ -126,10 +126,10 @@ export const PutawayOptimizer: React.FC<PutawayOptimizerProps> = ({
   };
 
   const handleCommit = async () => {
-    if (!aiPlan) return;
+    if (!putawayPlan) return;
     try {
-      await onCommitPutaway(aiPlan.assignments);
-      setAiPlan(null);
+      await onCommitPutaway(putawayPlan.assignments);
+      setPutawayPlan(null);
       setSku('');
       setQuantity(10);
       setShowConfirmModal(false);
@@ -161,7 +161,7 @@ export const PutawayOptimizer: React.FC<PutawayOptimizerProps> = ({
       )}
 
       {/* Putaway Receiving Intake Form */}
-      <form onSubmit={handleAISuggest} className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end mb-8">
+      <form onSubmit={handleCalculatePutaway} className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end mb-8">
         <div>
           <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
             Seleccionar SKU de Entrada
@@ -219,7 +219,7 @@ export const PutawayOptimizer: React.FC<PutawayOptimizerProps> = ({
       </form>
 
       {/* Heuristic Generated Putaway Plan */}
-      {aiPlan && (
+      {putawayPlan && (
         <div className="bg-blue-50/40 rounded-2xl border border-blue-100 p-6 space-y-6 animate-fade-in">
           <div className="flex items-center justify-between border-b border-blue-100/50 pb-3">
             <h3 className="font-bold text-slate-800 text-sm flex items-center gap-2">
@@ -232,7 +232,7 @@ export const PutawayOptimizer: React.FC<PutawayOptimizerProps> = ({
           </div>
 
           <div className="space-y-3">
-            {aiPlan.assignments.map((assignment, idx) => (
+            {putawayPlan.assignments.map((assignment, idx) => (
               <div
                 key={idx}
                 className="bg-white border border-slate-100 rounded-xl p-4 flex flex-col sm:flex-row items-stretch justify-between gap-4 shadow-xs"
@@ -258,13 +258,13 @@ export const PutawayOptimizer: React.FC<PutawayOptimizerProps> = ({
             ))}
           </div>
 
-          {aiPlan.logisticalReasoning && (
+          {putawayPlan.logisticalReasoning && (
             <div className="bg-white/80 rounded-xl border border-slate-100 p-4">
               <span className="text-[10px] font-bold tracking-wider text-slate-400 uppercase font-mono block mb-1">
                 Razonamiento Logístico del Motor
               </span>
               <p className="text-xs text-slate-600 leading-relaxed font-medium">
-                {aiPlan.logisticalReasoning}
+                {putawayPlan.logisticalReasoning}
               </p>
             </div>
           )}
@@ -282,7 +282,7 @@ export const PutawayOptimizer: React.FC<PutawayOptimizerProps> = ({
       )}
 
       {/* Confirmation warning modal for mutating database operations */}
-      {showConfirmModal && aiPlan && (
+      {showConfirmModal && putawayPlan && (
         <div className="fixed inset-0 bg-slate-950/45 flex items-center justify-center z-50 p-4 font-sans select-none">
           <div className="bg-white rounded-2xl border border-slate-100 shadow-xl max-w-md w-full p-6 animate-scale-up">
             <div className="flex items-center gap-2 text-amber-500 mb-4">
@@ -294,14 +294,14 @@ export const PutawayOptimizer: React.FC<PutawayOptimizerProps> = ({
 
             <p className="text-slate-600 text-xs leading-relaxed mb-6">
               Está autorizando la escritura directa de cambios en su Base de Datos de Almacén en Supabase.
-              Esto actualizará <span className="font-semibold text-slate-900">{aiPlan.assignments.length} celdas</span> en su tabla de <span className="font-mono bg-slate-100 px-1 rounded font-bold">Celdas (Bins)</span>, y aumentará las cantidades de stock en su tabla de <span className="font-mono bg-slate-100 px-1 rounded font-bold">Inventario</span>.
+              Esto actualizará <span className="font-semibold text-slate-900">{putawayPlan.assignments.length} celdas</span> en su tabla de <span className="font-mono bg-slate-100 px-1 rounded font-bold">Celdas (Bins)</span>, y aumentará las cantidades de stock en su tabla de <span className="font-mono bg-slate-100 px-1 rounded font-bold">Inventario</span>.
             </p>
 
             <div className="space-y-2 mb-6">
               <span className="text-[10px] font-bold text-slate-400 uppercase font-mono tracking-wider block">
                 Cambios Pendientes:
               </span>
-              {aiPlan.assignments.map((el, i) => (
+              {putawayPlan.assignments.map((el, i) => (
                 <div key={i} className="flex justify-between text-xs font-mono border-b border-slate-50 pb-1.5 text-slate-700">
                   <span>Celda {el.binId} ← {el.sku}</span>
                   <span className="font-bold">+{el.qty} unidades</span>

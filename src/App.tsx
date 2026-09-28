@@ -51,8 +51,17 @@ import {
   Move,
   BookOpen,
   Check,
+  Eye,
   EyeOff,
-  Undo2
+  Undo2,
+  ChevronDown,
+  ChevronUp,
+  X,
+  Bell,
+  PanelLeft,
+  PanelLeftClose,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 
 export default function App() {
@@ -60,6 +69,20 @@ export default function App() {
     const saved = sessionStorage.getItem('OWMS_SESSION_USER');
     return saved ? JSON.parse(saved) : null;
   });
+
+  // State to show/hide the sidebar options bar
+  const [isSidebarVisible, setIsSidebarVisible] = useState<boolean>(() => {
+    const saved = localStorage.getItem('owms_sidebar_visible');
+    return saved !== null ? saved === 'true' : true;
+  });
+
+  const toggleSidebar = () => {
+    setIsSidebarVisible(prev => {
+      const next = !prev;
+      localStorage.setItem('owms_sidebar_visible', String(next));
+      return next;
+    });
+  };
 
   const getPlatformRole = (currentUser: any) => {
     if (!currentUser) return 'Operador';
@@ -123,6 +146,25 @@ export default function App() {
   const [resolvingAlertId, setResolvingAlertId] = useState<string | null>(null);
   const [quickStockVal, setQuickStockVal] = useState<number>(0);
   const [quickExpDate, setQuickExpDate] = useState<string>('');
+
+  // Controls visibility of the system operational alerts panel (defaults to false / hidden per user request)
+  const [showAlertsPanel, setShowAlertsPanel] = useState<boolean>(() => {
+    const saved = localStorage.getItem('wms_show_alerts_panel');
+    return saved === 'true'; // Defaults to false (hidden)
+  });
+
+  const handleToggleAlertsPanel = (visible: boolean) => {
+    setShowAlertsPanel(visible);
+    localStorage.setItem('wms_show_alerts_panel', String(visible));
+  };
+
+  const handleDismissAllVisibleAlerts = (alertIds: string[]) => {
+    const next = Array.from(new Set([...dismissedAlerts, ...alertIds]));
+    setDismissedAlerts(next);
+    localStorage.setItem('wms_dismissed_alerts', JSON.stringify(next));
+    setStatusMsg(`Se han ocultado ${alertIds.length} alertas.`);
+    setTimeout(() => setStatusMsg(''), 3000);
+  };
 
   const [customProgrammedAlerts, setCustomProgrammedAlerts] = useState<any[]>(() => {
     const saved = localStorage.getItem('wms_custom_programmed_alerts');
@@ -241,7 +283,18 @@ export default function App() {
       });
 
       setBins(loadedBins);
-      setInventory(data.inventory);
+      
+      // Ensure recently registered SKU appears as the first option
+      const lastRegisteredSku = localStorage.getItem('wms_last_registered_sku');
+      let finalInventory = data.inventory;
+      if (lastRegisteredSku) {
+        const foundIdx = finalInventory.findIndex(i => i.sku.toUpperCase() === lastRegisteredSku.toUpperCase());
+        if (foundIdx > 0) {
+          const item = finalInventory[foundIdx];
+          finalInventory = [item, ...finalInventory.filter((_, idx) => idx !== foundIdx)];
+        }
+      }
+      setInventory(finalInventory);
       setOrders(data.orders);
       setLogs(data.logs);
 
@@ -762,8 +815,12 @@ export default function App() {
 
   // Add SKU index card
   const handleAddInventory = async (item: InventoryItem) => {
-    const updatedInventory = [...inventory, item];
+    // Put newly registered SKU at the top as the first option
+    const updatedInventory = [item, ...inventory.filter(i => i.sku.toUpperCase() !== item.sku.toUpperCase())];
     setInventory(updatedInventory);
+
+    // Save as last registered SKU so it remains first in tables, selectors and forms
+    localStorage.setItem('wms_last_registered_sku', item.sku);
 
     await syncAllToGoogleSheetNow(bins, updatedInventory, orders);
     await appendActivityLog(
@@ -895,6 +952,24 @@ export default function App() {
       {/* Top operational menu header bar */}
       <header className="bg-white border-b border-slate-200/50 sticky top-0 z-30 px-6 py-3 flex items-center justify-between shadow-xs select-none">
         <div className="flex items-center gap-3">
+          {/* Botón para Ocultar / Mostrar Barra de Opciones Lateral */}
+          <button
+            onClick={toggleSidebar}
+            className={`p-2 rounded-xl border transition cursor-pointer flex items-center justify-center ${
+              isSidebarVisible
+                ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+                : 'bg-blue-600 hover:bg-blue-700 text-white border-blue-600 shadow-sm'
+            }`}
+            title={isSidebarVisible ? "Ocultar barra de opciones lateral" : "Mostrar barra de opciones lateral"}
+            aria-label={isSidebarVisible ? "Ocultar barra de opciones lateral" : "Mostrar barra de opciones lateral"}
+          >
+            {isSidebarVisible ? (
+              <PanelLeftClose className="h-4.5 w-4.5" />
+            ) : (
+              <PanelLeft className="h-4.5 w-4.5" />
+            )}
+          </button>
+
           <div className="h-9 w-9 rounded-xl bg-blue-600 flex items-center justify-center text-white shrink-0 shadow shadow-blue-600/10">
             <Boxes className="h-5.5 w-5.5" />
           </div>
@@ -910,7 +985,35 @@ export default function App() {
         </div>
 
         {/* Global actions */}
-        <div className="flex items-center gap-4 text-xs font-semibold uppercase leading-none">
+        <div className="flex items-center gap-2.5 text-xs font-semibold uppercase leading-none">
+          {/* Quick toggle for operational alerts */}
+          {(() => {
+            const allSystemAlerts = getActiveAlerts();
+            const visibleCount = allSystemAlerts.filter(a => !dismissedAlerts.includes(a.id)).length;
+            if (allSystemAlerts.length === 0) return null;
+            return (
+              <button
+                onClick={() => handleToggleAlertsPanel(!showAlertsPanel)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[10px] tracking-wider transition cursor-pointer ${
+                  showAlertsPanel
+                    ? 'bg-rose-50 border-rose-250 text-rose-700 shadow-2xs'
+                    : 'bg-white border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-50 shadow-2xs'
+                }`}
+                title={showAlertsPanel ? "Ocultar panel de alertas de seguridad" : "Mostrar panel de alertas de seguridad"}
+              >
+                <Bell className="h-3.5 w-3.5 text-rose-500" />
+                <span className="hidden sm:inline">Alertas</span>
+                <span className="bg-rose-100 text-rose-800 px-1 py-0.2 rounded font-mono font-bold text-[9px]">
+                  {visibleCount}
+                </span>
+                {showAlertsPanel ? (
+                  <ChevronUp className="h-3 w-3 text-slate-400" />
+                ) : (
+                  <ChevronDown className="h-3 w-3 text-slate-400" />
+                )}
+              </button>
+            );
+          })()}
           
           {/* Quick sync reload indicator status */}
           <button
@@ -937,106 +1040,156 @@ export default function App() {
         </div>
       </header>
 
-      <div className="flex-1 flex flex-col md:flex-row">
+      <div className="flex-1 flex flex-col md:flex-row relative">
         
         {/* Navigation Sidebar Panel Controls */}
-        <aside className="w-full md:w-64 bg-slate-900 border-r border-slate-800 text-slate-300 p-5 shrink-0 flex flex-col justify-between gap-6 relative select-none">
-          <div className="space-y-6">
-            
-            {/* Category 1: Operaciones Básicas */}
-            <div className="space-y-1.5">
-              <span className="text-[9px] font-bold text-slate-500 font-mono uppercase tracking-widest block pl-3">
-                Operaciones Básicas
-              </span>
+        {isSidebarVisible ? (
+          <aside className="w-full md:w-64 bg-slate-900 border-r border-slate-800 text-slate-300 p-5 shrink-0 flex flex-col justify-between gap-6 relative select-none animate-fade-in transition-all">
+            <div className="space-y-6">
               
-              <div className="space-y-1">
-                {[
-                  { id: 'entradas', label: 'Entradas', icon: ArrowDownLeft },
-                  { id: 'salidas', label: 'Salidas', icon: ArrowUpRight },
-                  { id: 'movimientos', label: 'Movimientos', icon: Move },
-                  { id: 'conteos', label: 'Conteos Cíclicos', icon: ClipboardCheck },
-                  { id: 'pick_pack', label: 'Pick and Pack', icon: Trello },
-                ].map((tab) => {
-                  const Icon = tab.icon;
-                  const isActive = activeTab === tab.id;
-                  return (
-                    <button
-                      key={tab.id}
-                      onClick={() => setActiveTab(tab.id)}
-                      className={`w-full py-2.5 px-3 rounded-lg text-xs font-bold leading-none flex items-center gap-2.5 transition cursor-pointer ${
-                        isActive 
-                          ? 'bg-blue-600 text-white shadow shadow-blue-600/10' 
-                          : 'hover:bg-slate-800 hover:text-slate-100'
-                      }`}
-                    >
-                      <Icon className={`h-4.5 w-4.5 ${isActive ? 'text-white' : 'text-slate-400'}`} />
-                      {tab.label}
-                    </button>
-                  );
-                })}
+              {/* Sidebar Header with Collapse Button */}
+              <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
+                <span className="text-[10px] font-bold text-slate-400 font-mono uppercase tracking-widest">
+                  Menú de Opciones
+                </span>
+                <button
+                  onClick={toggleSidebar}
+                  className="px-2 py-1 rounded-lg bg-slate-800/80 hover:bg-slate-800 text-slate-400 hover:text-white transition cursor-pointer flex items-center gap-1.5 text-[10px] font-semibold"
+                  title="Ocultar barra de opciones lateral"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                  <span>Ocultar</span>
+                </button>
               </div>
+
+              {/* Category 1: Operaciones Básicas */}
+              <div className="space-y-1.5">
+                <span className="text-[9px] font-bold text-slate-500 font-mono uppercase tracking-widest block pl-3">
+                  Operaciones Básicas
+                </span>
+                
+                <div className="space-y-1">
+                  {[
+                    { id: 'entradas', label: 'Entradas', icon: ArrowDownLeft },
+                    { id: 'salidas', label: 'Salidas', icon: ArrowUpRight },
+                    { id: 'movimientos', label: 'Movimientos', icon: Move },
+                    { id: 'conteos', label: 'Conteos Cíclicos', icon: ClipboardCheck },
+                    { id: 'pick_pack', label: 'Pick and Pack', icon: Trello },
+                  ].map((tab) => {
+                    const Icon = tab.icon;
+                    const isActive = activeTab === tab.id;
+                    return (
+                      <button
+                        key={tab.id}
+                        onClick={() => setActiveTab(tab.id)}
+                        className={`w-full py-2.5 px-3 rounded-lg text-xs font-bold leading-none flex items-center gap-2.5 transition cursor-pointer ${
+                          isActive 
+                            ? 'bg-blue-600 text-white shadow shadow-blue-600/10' 
+                            : 'hover:bg-slate-800 hover:text-slate-100'
+                        }`}
+                      >
+                        <Icon className={`h-4.5 w-4.5 ${isActive ? 'text-white' : 'text-slate-400'}`} />
+                        {tab.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Category 2: Herramientas y Soporte */}
+              <div className="space-y-1.5">
+                <span className="text-[9px] font-bold text-slate-500 font-mono uppercase tracking-widest block pl-3">
+                  Soporte y Monitoreo
+                </span>
+                
+                <div className="space-y-1">
+                  {[
+                    { id: 'dashboard', label: 'Métricas', icon: TrendingUp },
+                    { id: 'reports', label: 'Centro de Reportes', icon: FileDown },
+                    { id: 'negocios', label: 'Líneas de Negocio', icon: Briefcase },
+                    { id: 'map', label: 'Mapa del Almacén', icon: MapPin },
+                    { id: 'crew', label: 'Registro de Personal', icon: UserCheck },
+                    { id: 'inventory', label: 'Registro de SKU', icon: Package },
+                    { id: 'etiquetas', label: 'Estación de Etiquetas', icon: Printer },
+                    { id: 'tarimas', label: 'Fichas de Tarimas', icon: Layers },
+                    { id: 'alertas', label: 'Gestión de Alertas', icon: ShieldAlert },
+                    { id: 'manual', label: 'Manual de Usuario', icon: BookOpen },
+                  ].map((tab) => {
+                    const Icon = tab.icon;
+                    const isActive = activeTab === tab.id;
+                    return (
+                      <button
+                        key={tab.id}
+                        onClick={() => setActiveTab(tab.id)}
+                        className={`w-full py-2 px-3 rounded-lg text-xs font-semibold leading-none flex items-center gap-2.5 transition cursor-pointer ${
+                          isActive 
+                            ? 'bg-slate-800 text-white border border-slate-700/50' 
+                            : 'hover:bg-slate-800/50 hover:text-slate-100 text-slate-400'
+                        }`}
+                      >
+                        <Icon className={`h-4 w-4 ${isActive ? 'text-white' : 'text-slate-500'}`} />
+                        {tab.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
             </div>
 
-            {/* Category 2: Herramientas y Soporte */}
-            <div className="space-y-1.5">
-              <span className="text-[9px] font-bold text-slate-500 font-mono uppercase tracking-widest block pl-3">
-                Soporte y Monitoreo
-              </span>
-              
-              <div className="space-y-1">
-                {[
-                  { id: 'dashboard', label: 'Métricas', icon: TrendingUp },
-                  { id: 'reports', label: 'Centro de Reportes', icon: FileDown },
-                  { id: 'negocios', label: 'Líneas de Negocio', icon: Briefcase },
-                  { id: 'map', label: 'Mapa del Almacén', icon: MapPin },
-                  { id: 'crew', label: 'Registro de Personal', icon: UserCheck },
-                  { id: 'inventory', label: 'Registro de SKU', icon: Package },
-                  { id: 'etiquetas', label: 'Estación de Etiquetas', icon: Printer },
-                  { id: 'tarimas', label: 'Fichas de Tarimas', icon: Layers },
-                  { id: 'alertas', label: 'Gestión de Alertas', icon: ShieldAlert },
-                  { id: 'manual', label: 'Manual de Usuario', icon: BookOpen },
-                ].map((tab) => {
-                  const Icon = tab.icon;
-                  const isActive = activeTab === tab.id;
-                  return (
-                    <button
-                      key={tab.id}
-                      onClick={() => setActiveTab(tab.id)}
-                      className={`w-full py-2 px-3 rounded-lg text-xs font-semibold leading-none flex items-center gap-2.5 transition cursor-pointer ${
-                        isActive 
-                          ? 'bg-slate-800 text-white border border-slate-700/50' 
-                          : 'hover:bg-slate-800/50 hover:text-slate-100 text-slate-400'
-                      }`}
-                    >
-                      <Icon className={`h-4 w-4 ${isActive ? 'text-white' : 'text-slate-500'}`} />
-                      {tab.label}
-                    </button>
-                  );
-                })}
+            {/* Database coordinate references / Supabase Sync Status card */}
+            <div className="space-y-3 border-t border-slate-800/60 pt-4">
+              <div className="bg-blue-500/15 text-blue-400 p-3.5 rounded-xl text-xs flex flex-col gap-1 border border-blue-500/10">
+                <div className="flex items-center justify-between">
+                  <span className="font-extrabold tracking-wider text-[10px] uppercase font-mono">BASE DE DATOS SQL</span>
+                  <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse"></div>
+                </div>
+                <p className="opacity-80 text-[10px] font-medium leading-relaxed">Motor: Supabase (PostgreSQL)</p>
+                <div className="text-[10px] text-blue-300 font-mono tracking-tighter truncate block mt-1">
+                  Conexión segura SSL activa
+                </div>
               </div>
             </div>
-
-
-
-          </div>
-
-          {/* Database coordinate references / Supabase Sync Status card */}
-          <div className="space-y-3 border-t border-slate-800/60 pt-4">
-            <div className="bg-blue-500/15 text-blue-400 p-3.5 rounded-xl text-xs flex flex-col gap-1 border border-blue-500/10">
-              <div className="flex items-center justify-between">
-                <span className="font-extrabold tracking-wider text-[10px] uppercase font-mono">BASE DE DATOS SQL</span>
-                <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse"></div>
-              </div>
-              <p className="opacity-80 text-[10px] font-medium leading-relaxed">Motor: Supabase (PostgreSQL)</p>
-              <div className="text-[10px] text-blue-300 font-mono tracking-tighter truncate block mt-1">
-                Conexión segura SSL activa
-              </div>
-            </div>
-          </div>
-        </aside>
+          </aside>
+        ) : (
+          /* Subtle floating tab docked on left screen edge to quickly reopen sidebar */
+          <button
+            onClick={toggleSidebar}
+            className="fixed left-0 top-1/2 -translate-y-1/2 z-40 bg-slate-900/95 hover:bg-blue-600 text-slate-300 hover:text-white px-2 py-4 rounded-r-2xl shadow-xl border-y border-r border-slate-700 hover:border-blue-500 transition-all flex flex-col items-center gap-1.5 cursor-pointer group"
+            title="Mostrar barra de opciones lateral"
+            aria-label="Mostrar barra de opciones lateral"
+          >
+            <ChevronRight className="h-4 w-4 group-hover:translate-x-0.5 transition-transform" />
+            <span className="text-[9px] font-bold font-mono [writing-mode:vertical-lr] tracking-widest uppercase">
+              Menú
+            </span>
+          </button>
+        )}
 
         {/* Content Viewport Frame */}
         <main className="flex-1 p-6 md:p-8 space-y-6 max-w-full">
+          
+          {/* Quick status bar when sidebar is hidden */}
+          {!isSidebarVisible && (
+            <div className="flex items-center justify-between bg-white border border-slate-200/80 px-4 py-2 rounded-xl shadow-2xs text-xs">
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={toggleSidebar}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold transition cursor-pointer"
+                  title="Mostrar barra de opciones lateral"
+                >
+                  <PanelLeft className="h-3.5 w-3.5" />
+                  <span>Mostrar Barra de Opciones</span>
+                </button>
+                <span className="text-slate-300 font-light">|</span>
+                <span className="text-slate-500 font-medium">Sección activa:</span>
+                <span className="font-bold text-slate-800 capitalize font-mono">{activeTab}</span>
+              </div>
+              <span className="text-[10px] text-slate-400 hidden sm:inline font-mono">
+                Presione [Mostrar Barra] para cambiar de módulo
+              </span>
+            </div>
+          )}
           
           {statusMsg && (
             <div className={`p-4 rounded-xl border text-xs font-semibold flex items-center justify-between ${
@@ -1058,6 +1211,7 @@ export default function App() {
             if (allSystemAlerts.length === 0) return null;
 
             if (visibleSystemAlerts.length === 0) {
+              if (!showAlertsPanel) return null;
               return (
                 <div className="bg-emerald-50 border border-emerald-150 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-xs">
                   <div className="flex items-center gap-2">
@@ -1066,15 +1220,61 @@ export default function App() {
                       TODAS LAS ALERTAS OPERATIVAS ({allSystemAlerts.length}) HAN SIDO RESUELTAS O DESCARTADAS
                     </span>
                   </div>
-                  <button
-                    onClick={() => {
-                      setDismissedAlerts([]);
-                      localStorage.removeItem('wms_dismissed_alerts');
-                    }}
-                    className="text-xs font-bold font-mono text-emerald-700 hover:text-emerald-900 bg-white hover:bg-emerald-100/50 border border-emerald-200 px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition-all shadow-xs"
-                  >
-                    <Undo2 className="h-3.5 w-3.5" /> Reactivar todas
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        setDismissedAlerts([]);
+                        localStorage.removeItem('wms_dismissed_alerts');
+                      }}
+                      className="text-xs font-bold font-mono text-emerald-700 hover:text-emerald-900 bg-white hover:bg-emerald-100/50 border border-emerald-200 px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                    >
+                      <Undo2 className="h-3.5 w-3.5" /> Reactivar todas
+                    </button>
+                    <button
+                      onClick={() => handleToggleAlertsPanel(false)}
+                      className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-emerald-100/60 transition cursor-pointer"
+                      title="Ocultar aviso"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              );
+            }
+
+            if (!showAlertsPanel) {
+              return (
+                <div className="bg-white/95 hover:bg-white border border-slate-200 rounded-xl px-4 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 shadow-2xs transition-all">
+                  <div className="flex items-center gap-2.5">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                    </span>
+                    <ShieldAlert className="h-4 w-4 text-slate-500" />
+                    <span className="text-xs font-semibold text-slate-700 font-mono">
+                      Alertas de Seguridad: {visibleSystemAlerts.length} {visibleSystemAlerts.length === 1 ? 'alerta activa oculta' : 'alertas activas ocultas'}
+                    </span>
+                    {dismissedCount > 0 && (
+                      <span className="text-[10px] text-slate-400 font-mono hidden md:inline">
+                        ({dismissedCount} descartadas)
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleToggleAlertsPanel(true)}
+                      className="text-xs font-mono font-bold text-slate-700 hover:text-slate-900 bg-slate-50 hover:bg-slate-100 border border-slate-250 px-2.5 py-1 rounded-lg flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
+                    >
+                      <Eye className="h-3.5 w-3.5 text-blue-600" /> Mostrar panel de alertas
+                    </button>
+                    <button
+                      onClick={() => handleDismissAllVisibleAlerts(visibleSystemAlerts.map(a => a.id))}
+                      className="text-xs font-mono font-medium text-slate-500 hover:text-slate-800 px-2 py-1 rounded-lg hover:bg-slate-100 transition flex items-center gap-1 cursor-pointer"
+                      title="Descartar todas las alertas activas"
+                    >
+                      <EyeOff className="h-3 w-3" /> Descartar todas
+                    </button>
+                  </div>
                 </div>
               );
             }
@@ -1091,14 +1291,28 @@ export default function App() {
                       Alertas de Seguridad Activas del WMS ({visibleSystemAlerts.length})
                     </h3>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      onClick={() => handleDismissAllVisibleAlerts(visibleSystemAlerts.map(a => a.id))}
+                      className="text-[10px] font-mono font-bold text-rose-700 hover:text-rose-900 bg-rose-50 hover:bg-rose-100 border border-rose-200 px-2.5 py-1 rounded-lg flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
+                      title="Ocultar todas las alertas de este panel"
+                    >
+                      <EyeOff className="h-3 w-3" /> Ocultar todas las alertas
+                    </button>
+                    <button
+                      onClick={() => handleToggleAlertsPanel(false)}
+                      className="text-[10px] font-mono font-bold text-slate-600 hover:text-slate-900 bg-slate-50 hover:bg-slate-100 border border-slate-250 px-2.5 py-1 rounded-lg flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
+                      title="Ocultar este panel"
+                    >
+                      <ChevronUp className="h-3 w-3" /> Ocultar panel
+                    </button>
                     {dismissedCount > 0 && (
                       <button
                         onClick={() => {
                           setDismissedAlerts([]);
                           localStorage.removeItem('wms_dismissed_alerts');
                         }}
-                        className="text-[10px] font-mono font-bold text-slate-500 hover:text-slate-800 bg-slate-50 hover:bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-lg flex items-center gap-1 transition-all"
+                        className="text-[10px] font-mono font-bold text-slate-500 hover:text-slate-800 bg-slate-50 hover:bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-lg flex items-center gap-1 transition-all cursor-pointer"
                       >
                         <Undo2 className="h-3 w-3" /> Restaurar {dismissedCount} ocultas
                       </button>
@@ -1323,7 +1537,7 @@ export default function App() {
                   <div className="p-4 bg-blue-50/50 border border-blue-150 rounded-2xl text-xs text-blue-800 flex items-center gap-3">
                     <span className="h-2 w-2 rounded-full bg-blue-500 animate-pulse shrink-0"></span>
                     <p className="font-semibold">
-                      <strong>Escaneo de Recepción de Materiales:</strong> Escanee códigos de barras de productos entrantes para asignarlos directamente a celdas libres o recomendadas.
+                      <strong>Escaneo de Recepción de Materiales:</strong> Escanee códigos de barras para verificar registro inmediato, consultar en qué posición física se encuentra o a qué celda debe ir (Putaway sugerido).
                     </p>
                   </div>
                   <BarcodeConsole
@@ -1335,6 +1549,8 @@ export default function App() {
                     initialModule="entrada"
                     hideModuleSelector={true}
                     hideHeader={true}
+                    onAddInventory={handleAddInventory}
+                    onNavigateToInventory={() => setActiveTab('inventory')}
                   />
                 </div>
               ) : (
@@ -1399,7 +1615,7 @@ export default function App() {
                   <div className="p-4 bg-amber-50/50 border border-amber-150 rounded-2xl text-xs text-amber-800 flex items-center gap-3">
                     <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse shrink-0"></span>
                     <p className="font-semibold">
-                      <strong>Validación e Identificación de Salidas:</strong> Confirme las unidades a despachar escaneando el código del artículo y asociándolo a la orden activa correspondiente.
+                      <strong>Validación e Identificación de Salidas:</strong> Escanee el código para validar registro, ver en qué celdas físicas está ubicado y conocer de qué posición óptima se sugiere extraer (Picking).
                     </p>
                   </div>
                   <BarcodeConsole
@@ -1411,6 +1627,8 @@ export default function App() {
                     initialModule="salida"
                     hideModuleSelector={true}
                     hideHeader={true}
+                    onAddInventory={handleAddInventory}
+                    onNavigateToInventory={() => setActiveTab('inventory')}
                   />
                 </div>
               )}
@@ -1477,6 +1695,8 @@ export default function App() {
                         hideModuleSelector={true}
                         hideHeader={true}
                         selectedBarcode={selectedBarcodeForCount}
+                        onAddInventory={handleAddInventory}
+                        onNavigateToInventory={() => setActiveTab('inventory')}
                       />
                     </div>
 
@@ -1781,6 +2001,10 @@ export default function App() {
               logs={logs}
               orders={orders}
               isReadOnly={isReadOnly}
+              onNavigateToMetrics={(sku) => {
+                if (sku) localStorage.setItem('owms_selected_trend_sku', sku);
+                setActiveTab('dashboard');
+              }}
             />
           )}
 

@@ -23,6 +23,7 @@ import {
 } from 'recharts';
 import {
   Boxes,
+  Building2,
   Truck,
   TrendingUp,
   TriangleAlert,
@@ -205,6 +206,303 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const [thresholdEditorPage, setThresholdEditorPage] = useState<number>(1);
   const [editingSku, setEditingSku] = useState<string | null>(null);
   const [editingSkuValue, setEditingSkuValue] = useState<number>(10);
+
+  // SKU Stock Trend Analyzer States for Métricas
+  const [selectedTrendSku, setSelectedTrendSku] = useState<string>(() => {
+    return localStorage.getItem('owms_selected_trend_sku') || '';
+  });
+
+  const activeTrendSku = selectedTrendSku || (inventory.length > 0 ? inventory[0].sku : '');
+  const activeTrendItem = inventory.find(i => i.sku === activeTrendSku);
+
+  // Auto-scroll to SKU Trend Analyzer if navigated from Registro de SKU
+  useEffect(() => {
+    const saved = localStorage.getItem('owms_selected_trend_sku');
+    if (saved) {
+      setSelectedTrendSku(saved);
+      const timer = setTimeout(() => {
+        const el = document.getElementById('sku-trend-analyzer-section');
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 150);
+      return () => clearTimeout(timer);
+    }
+  }, []);
+
+  // Supplier Summary Calculations for Métricas (Movido desde Registro de SKU)
+  const supplierStats = React.useMemo(() => {
+    const statsMap: { [supplierName: string]: { skuCount: number; totalQty: number; totalValue: number } } = {};
+    let totalInventoryValue = 0;
+    let totalInventoryQty = 0;
+
+    inventory.forEach((item) => {
+      const supplierName = (item.supplier || 'Sin Asignar / Desconocido').trim();
+      const cost = item.cost || 0;
+      const qty = item.qty || 0;
+      const value = qty * cost;
+
+      if (!statsMap[supplierName]) {
+        statsMap[supplierName] = {
+          skuCount: 0,
+          totalQty: 0,
+          totalValue: 0
+        };
+      }
+
+      statsMap[supplierName].skuCount += 1;
+      statsMap[supplierName].totalQty += qty;
+      statsMap[supplierName].totalValue += value;
+
+      totalInventoryValue += value;
+      totalInventoryQty += qty;
+    });
+
+    const list = Object.entries(statsMap).map(([name, data]) => ({
+      name,
+      ...data,
+      valueShare: totalInventoryValue > 0 ? (data.totalValue / totalInventoryValue) * 100 : 0,
+      qtyShare: totalInventoryQty > 0 ? (data.totalQty / totalInventoryQty) * 100 : 0
+    }));
+
+    // Sort by total value descending
+    list.sort((a, b) => b.totalValue - a.totalValue);
+
+    return {
+      list,
+      totalInventoryValue,
+      totalInventoryQty,
+      leadingSupplier: list.length > 0 ? list[0] : null
+    };
+  }, [inventory]);
+
+  // Chart data for Supplier Capital Analysis
+  const supplierBarChartData = React.useMemo(() => {
+    return supplierStats.list.slice(0, 8).map(sup => ({
+      name: sup.name.length > 14 ? sup.name.slice(0, 12) + '...' : sup.name,
+      fullName: sup.name,
+      valor: Math.round(sup.totalValue),
+      unidades: sup.totalQty,
+      porcentaje: Number(sup.valueShare.toFixed(1))
+    }));
+  }, [supplierStats]);
+
+  // Helper to parse logs and construct a historical stock timeline for a given SKU
+  const getSkuHistoryData = (targetSku: string, currentQty: number, activityLogs: ActivityLog[]) => {
+    if (!targetSku) return [];
+
+    const skuLogs = activityLogs
+      .filter(log => {
+        const detailsLower = (log.details || '').toLowerCase();
+        const skuLower = targetSku.toLowerCase();
+        return detailsLower.includes(skuLower);
+      })
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+    if (skuLogs.length === 0) {
+      const now = new Date();
+      const past = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      return [
+        {
+          timestamp: past.toISOString(),
+          dateStr: 'Registro Inicial',
+          qty: currentQty,
+          action: 'Registro Inicial Estable',
+          delta: 0
+        },
+        {
+          timestamp: now.toISOString(),
+          dateStr: 'Actual',
+          qty: currentQty,
+          action: 'Stock Actual en Almacén',
+          delta: 0
+        }
+      ];
+    }
+
+    const parsedChanges = skuLogs.map(log => {
+      const details = log.details || '';
+      const timestamp = log.timestamp;
+      
+      let dateStr = 'Unknown Date';
+      try {
+        const dateObj = new Date(timestamp);
+        if (!isNaN(dateObj.getTime())) {
+          dateStr = dateObj.toLocaleDateString(undefined, { 
+            month: 'short', 
+            day: 'numeric', 
+            hour: '2-digit', 
+            minute: '2-digit' 
+          });
+        }
+      } catch (e) {}
+
+      const escapedSku = targetSku.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+      // Adjust Inventory Stock absolute transition
+      const adjustRegex = new RegExp(`from\\s+(\\d+)\\s+to\\s+(\\d+)`, 'i');
+      const adjustMatch = details.match(adjustRegex);
+      if (adjustMatch && log.action === 'Adjust Inventory Stock') {
+        const oldQty = parseInt(adjustMatch[1], 10);
+        const newQty = parseInt(adjustMatch[2], 10);
+        return {
+          timestamp,
+          dateStr,
+          action: log.action,
+          type: 'absolute' as const,
+          oldQty,
+          newQty,
+          delta: newQty - oldQty
+        };
+      }
+
+      // Simulated Intake PO delivery
+      const deliveryRegex = new RegExp(`delivery of\\s+(\\d+)\\s+units`, 'i');
+      const deliveryMatch = details.match(deliveryRegex);
+      if (deliveryMatch && (log.action.includes('Delivery') || log.action.includes('Inbound') || log.action.includes('Simulate'))) {
+        const qty = parseInt(deliveryMatch[1], 10);
+        return {
+          timestamp,
+          dateStr,
+          action: log.action,
+          type: 'delta' as const,
+          delta: qty
+        };
+      }
+
+      // Putaway Allocation Complete
+      const putawayRegex = new RegExp(`\\((\\d+)\\s+units\\)`, 'i');
+      const putawayMatch = details.match(putawayRegex);
+      if (putawayMatch && log.action === 'Putaway Allocation Complete') {
+        const qty = parseInt(putawayMatch[1], 10);
+        return {
+          timestamp,
+          dateStr,
+          action: log.action,
+          type: 'delta' as const,
+          delta: qty
+        };
+      }
+
+      // Order Dispatch Completed
+      const dispatchRegex = new RegExp(`${escapedSku}\\s*\\(([-\\+]?\\d+)\\)`, 'i');
+      const dispatchMatch = details.match(dispatchRegex);
+      if (dispatchMatch) {
+        const qty = parseInt(dispatchMatch[1], 10);
+        return {
+          timestamp,
+          dateStr,
+          action: log.action,
+          type: 'delta' as const,
+          delta: qty
+        };
+      }
+
+      // Generic delta parenthesis fallback
+      const generalRegex = /\(([-\+]?\\d+)\)/;
+      const generalMatch = details.match(generalRegex);
+      if (generalMatch) {
+        const qty = parseInt(generalMatch[1], 10);
+        return {
+          timestamp,
+          dateStr,
+          action: log.action,
+          type: 'delta' as const,
+          delta: qty
+        };
+      }
+
+      return {
+        timestamp,
+        dateStr,
+        action: log.action,
+        type: 'delta' as const,
+        delta: 0
+      };
+    });
+
+    const historyPoints: { timestamp: string; dateStr: string; qty: number; action: string; delta: number }[] = [];
+    let rollingQty = currentQty;
+
+    // Insert present state
+    historyPoints.unshift({
+      timestamp: new Date().toISOString(),
+      dateStr: 'Current',
+      qty: currentQty,
+      action: 'Current Stock State',
+      delta: 0
+    });
+
+    // Go backwards in time
+    for (let i = parsedChanges.length - 1; i >= 0; i--) {
+      const change = parsedChanges[i];
+      if (change.type === 'absolute') {
+        historyPoints.unshift({
+          timestamp: change.timestamp,
+          dateStr: change.dateStr,
+          qty: change.newQty,
+          action: change.action,
+          delta: change.delta
+        });
+        rollingQty = change.oldQty;
+      } else {
+        historyPoints.unshift({
+          timestamp: change.timestamp,
+          dateStr: change.dateStr,
+          qty: rollingQty,
+          action: change.action,
+          delta: change.delta
+        });
+        rollingQty = Math.max(0, rollingQty - change.delta);
+      }
+    }
+
+    // Add baseline
+    const firstLog = parsedChanges[0];
+    if (firstLog) {
+      historyPoints.unshift({
+        timestamp: new Date(new Date(firstLog.timestamp).getTime() - 1800000).toISOString(),
+        dateStr: 'Initial',
+        qty: rollingQty,
+        action: 'Starting Quantity Baseline',
+        delta: 0
+      });
+    }
+
+    return historyPoints;
+  };
+
+  const skuTrendHistoryData = React.useMemo(() => {
+    return activeTrendSku && activeTrendItem ? getSkuHistoryData(activeTrendSku, activeTrendItem.qty, logs) : [];
+  }, [activeTrendSku, activeTrendItem, logs]);
+
+  const CustomSkuTrendTooltip = ({ active, payload }: any) => {
+    if (active && payload && payload.length) {
+      const data = payload[0].payload;
+      return (
+        <div className="bg-slate-900 text-white p-3.5 rounded-xl border border-slate-800 shadow-xl max-w-xs text-xs space-y-1.5 font-sans">
+          <div className="font-bold text-slate-300 font-mono text-[9px] uppercase tracking-wider">{data.dateStr}</div>
+          <div className="flex justify-between gap-4">
+            <span className="text-slate-400 font-medium">Nivel de Cantidad:</span>
+            <span className="font-bold text-indigo-400 font-mono text-sm">{data.qty} unidades</span>
+          </div>
+          {data.delta !== 0 && (
+            <div className="flex justify-between gap-4 text-[11px]">
+              <span className="text-slate-400">Ajuste delta neto:</span>
+              <span className={`font-mono font-bold ${data.delta > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {data.delta > 0 ? `+${data.delta}` : data.delta} unidades
+              </span>
+            </div>
+          )}
+          <div className="text-[10px] text-indigo-200 bg-indigo-950/40 p-2 rounded-lg border border-indigo-900/30 leading-relaxed">
+            <span className="font-bold block text-[8px] uppercase tracking-wider text-indigo-300/80 mb-0.5">Acción Registrada</span>
+            {data.action}
+          </div>
+        </div>
+      );
+    }
+    return null;
+  };
 
   // Handlers para la gestión de umbrales de stock crítico
   const handleSaveGlobalThreshold = (val: number) => {
@@ -2140,7 +2438,335 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
       </div>
 
-      {/* SECCIÓN: CONFIGURACIÓN DE NOTIFICACIONES */}
+      {/* Stock History Trend Chart Card (Analizador de Tendencias de Cantidad de Stock de SKU) */}
+      <div id="sku-trend-analyzer-section" className="bg-white border border-slate-100 rounded-3xl shadow-sm p-6 space-y-6">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-150 pb-4">
+          <div>
+            <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+              <TrendingUp className="h-5 w-5 text-indigo-500" />
+              Analizador de Tendencias de Cantidad de Stock de SKU
+            </h3>
+            <p className="text-[11px] text-slate-400 mt-0.5">
+              Visualiza las fluctuaciones de cantidad históricas y en tiempo real basadas en registros físicos automatizados.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider font-mono">
+              Seleccionar SKU para Análisis:
+            </label>
+            <select
+              value={activeTrendSku}
+              onChange={(e) => {
+                setSelectedTrendSku(e.target.value);
+                localStorage.setItem('owms_selected_trend_sku', e.target.value);
+              }}
+              className="text-xs font-bold rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 cursor-pointer shadow-2xs"
+            >
+              {inventory.map((item) => (
+                <option key={item.sku} value={item.sku}>
+                  {item.sku} — {item.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {activeTrendItem ? (
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+            {/* Left stats metrics list */}
+            <div className="lg:col-span-1 flex flex-col gap-3.5">
+              {/* Product Info Mini Block */}
+              <div className="p-4 bg-slate-50 border border-slate-100 rounded-xl space-y-2">
+                <div className="text-[10px] uppercase font-bold text-slate-400 font-mono">SKU Seleccionado Actual</div>
+                <div className="font-mono font-black text-slate-800 text-sm tracking-tight truncate" title={activeTrendItem.sku}>
+                  {activeTrendItem.sku}
+                </div>
+                <div className="text-xs font-bold text-slate-600 line-clamp-2">
+                  {activeTrendItem.name}
+                </div>
+                <div className="text-[10px] bg-indigo-50 text-indigo-700 font-bold font-mono px-2 py-0.5 rounded-md inline-block uppercase">
+                  {activeTrendItem.category}
+                </div>
+              </div>
+
+              {/* Stats values */}
+              <div className="grid grid-cols-2 lg:grid-cols-1 gap-3">
+                <div className="p-3 bg-indigo-50/50 border border-indigo-100 rounded-xl">
+                  <span className="block text-[9px] uppercase font-bold text-slate-400 font-mono">Cantidad Actual</span>
+                  <span className="text-lg font-black font-mono text-indigo-700">{activeTrendItem.qty} <span className="text-xs font-medium text-slate-500">unidades</span></span>
+                </div>
+                
+                <div className="p-3 bg-emerald-50/50 border border-emerald-100 rounded-xl">
+                  <span className="block text-[9px] uppercase font-bold text-slate-400 font-mono">Objetivo de Seguridad</span>
+                  <span className="text-lg font-black font-mono text-emerald-700">{activeTrendItem.minQty} <span className="text-xs font-medium text-slate-500">unidades</span></span>
+                </div>
+
+                <div className="col-span-2 lg:col-span-1 p-3 bg-slate-50 border border-slate-100 rounded-xl">
+                  <span className="block text-[9px] uppercase font-bold text-slate-400 font-mono">Registros de Historial</span>
+                  <span className="text-lg font-black font-mono text-slate-700">
+                    {logs.filter(log => (log.details || '').toLowerCase().includes(activeTrendItem.sku.toLowerCase())).length} <span className="text-xs font-medium text-slate-500">entradas</span>
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Recharts chart on the right */}
+            <div className="lg:col-span-3 bg-slate-50/50 border border-slate-100 rounded-xl p-4 flex flex-col justify-between min-h-[340px]">
+              {skuTrendHistoryData.length > 0 ? (
+                <div className="w-full h-[300px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart
+                      data={skuTrendHistoryData}
+                      margin={{ top: 10, right: 20, left: -20, bottom: 5 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                      <XAxis 
+                        dataKey="dateStr" 
+                        stroke="#94a3b8" 
+                        fontSize={9} 
+                        tickLine={false} 
+                        axisLine={false}
+                        dy={8}
+                      />
+                      <YAxis 
+                        stroke="#94a3b8" 
+                        fontSize={9} 
+                        tickLine={false} 
+                        axisLine={false}
+                        dx={-8}
+                      />
+                      <Tooltip content={<CustomSkuTrendTooltip />} />
+                      <Legend 
+                        verticalAlign="top" 
+                        height={36} 
+                        iconType="circle" 
+                        iconSize={8}
+                        wrapperStyle={{ fontSize: '10px', fontWeight: 'bold', fontFamily: 'monospace' }}
+                      />
+                      <Line
+                        name="Nivel Físico de Cantidad de SKU"
+                        type="monotone"
+                        dataKey="qty"
+                        stroke="#4f46e5"
+                        strokeWidth={2.5}
+                        dot={{ r: 3.5, strokeWidth: 1.5, stroke: "#ffffff", fill: "#4f46e5" }}
+                        activeDot={{ r: 6, strokeWidth: 1, stroke: "#ffffff", fill: "#312e81" }}
+                        animationDuration={1200}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center grow text-center py-12 px-4 space-y-2 select-none">
+                  <div className="p-3 bg-indigo-50 text-indigo-600 rounded-full">
+                    <TrendingUp className="h-6 w-6 stroke-[1.5]" />
+                  </div>
+                  <h4 className="text-xs font-bold text-slate-700">Esperando Actividad de Registro</h4>
+                  <p className="text-[11px] text-slate-400 max-w-sm">
+                    Solo se encontró un único punto de datos para este SKU. ¡Intente registrar entradas o salidas para generar nuevos datos históricos de tendencia!
+                  </p>
+                </div>
+              )}
+              
+              <div className="flex items-center justify-between text-[9px] text-slate-400 font-mono mt-2 pt-2 border-t border-slate-100">
+                <span>Eje del Tiempo (Más antiguo → Más reciente)</span>
+                <span>Todos los valores están sincronizados automáticamente con Supabase</span>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="text-center py-12 text-xs text-slate-400 font-medium">
+            No hay productos registrados en el inventario para realizar análisis históricos.
+          </div>
+        )}
+      </div>
+
+      {/* ANÁLISIS DE CAPITAL Y VOLUMEN DE PROVEEDORES (Movido de Registro de SKU a Métricas) */}
+      <div id="supplier-capital-metrics-section" className="bg-white border border-slate-100 rounded-3xl shadow-sm p-6 space-y-6">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-150 pb-4">
+          <div>
+            <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+              <Building2 className="h-5 w-5 text-indigo-500" />
+              Análisis de Capital y Volumen de Proveedores
+            </h3>
+            <p className="text-[11px] text-slate-400 mt-0.5">
+              Distribución calculada de la inversión total de capital y la contribución del volumen de stock por fabricante registrado.
+            </p>
+          </div>
+          <div className="text-[10px] font-mono font-bold bg-slate-100 text-slate-600 px-3 py-1 rounded-md border border-slate-200/50">
+            {supplierStats.list.length} Proveedores Registrados
+          </div>
+        </div>
+
+        {supplierStats.list.length > 0 ? (
+          <div className="space-y-6">
+            {/* Top Stat Cards Row */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="p-4 bg-slate-50 border border-slate-100 rounded-xl flex items-center gap-4">
+                <div className="p-3 bg-indigo-50 text-indigo-600 rounded-xl shrink-0">
+                  <DollarSign className="h-5 w-5" />
+                </div>
+                <div>
+                  <span className="block text-[9px] uppercase font-bold text-slate-400 font-mono">Capital Total Invertido</span>
+                  <span className="text-base font-black font-mono text-slate-800">
+                    ${supplierStats.totalInventoryValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+              </div>
+
+              <div className="p-4 bg-slate-50 border border-slate-100 rounded-xl flex items-center gap-4">
+                <div className="p-3 bg-blue-50 text-blue-600 rounded-xl shrink-0">
+                  <Boxes className="h-5 w-5" />
+                </div>
+                <div>
+                  <span className="block text-[9px] uppercase font-bold text-slate-400 font-mono">Volumen Total de Stock</span>
+                  <span className="text-base font-black font-mono text-slate-800">
+                    {supplierStats.totalInventoryQty.toLocaleString()} <span className="text-xs font-semibold text-slate-400">unidades</span>
+                  </span>
+                </div>
+              </div>
+
+              <div className="p-4 bg-slate-50 border border-slate-100 rounded-xl flex items-center gap-4">
+                <div className="p-3 bg-emerald-50 text-emerald-600 rounded-xl shrink-0">
+                  <TrendingUp className="h-5 w-5" />
+                </div>
+                <div className="min-w-0">
+                  <span className="block text-[9px] uppercase font-bold text-slate-400 font-mono">Socio Comercial Principal</span>
+                  <span className="text-base font-black font-mono text-slate-800 block truncate" title={supplierStats.leadingSupplier?.name}>
+                    {supplierStats.leadingSupplier?.name || 'N/A'}
+                  </span>
+                  {supplierStats.leadingSupplier && (
+                    <span className="text-[10px] font-sans font-semibold text-emerald-600">
+                      Posee el {supplierStats.leadingSupplier.valueShare.toFixed(1)}% de valoración
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="p-4 bg-slate-50 border border-slate-100 rounded-xl flex items-center gap-4">
+                <div className="p-3 bg-purple-50 text-purple-600 rounded-xl shrink-0">
+                  <Building2 className="h-5 w-5" />
+                </div>
+                <div>
+                  <span className="block text-[9px] uppercase font-bold text-slate-400 font-mono">Diversidad Promedio</span>
+                  <span className="text-base font-black font-mono text-slate-800">
+                    {supplierStats.list.length > 0 ? (inventory.length / supplierStats.list.length).toFixed(1) : 0} <span className="text-xs font-semibold text-slate-400">SKUs/prov</span>
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Visual Recharts BarChart for Top Suppliers */}
+            {supplierBarChartData.length > 0 && (
+              <div className="bg-slate-50/60 border border-slate-150 rounded-2xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-700 font-mono uppercase tracking-wide">
+                    Comparativa de Capital Invertido ($) y Volumen (uds) por Proveedor
+                  </span>
+                  <span className="text-[10px] text-slate-400 font-mono">Top {supplierBarChartData.length} Proveedores</span>
+                </div>
+                <div className="h-64 w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={supplierBarChartData} margin={{ top: 10, right: 20, left: 10, bottom: 20 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                      <XAxis dataKey="name" stroke="#64748b" fontSize={10} tickLine={false} />
+                      <YAxis yAxisId="left" stroke="#6366f1" fontSize={10} tickLine={false} tickFormatter={(v) => `$${v >= 1000 ? (v / 1000).toFixed(0) + 'k' : v}`} />
+                      <YAxis yAxisId="right" orientation="right" stroke="#10b981" fontSize={10} tickLine={false} tickFormatter={(v) => `${v >= 1000 ? (v / 1000).toFixed(0) + 'k' : v}u`} />
+                      <Tooltip 
+                        formatter={(value: any, name: string) => [
+                          name === 'Capital Invertido ($)' ? `$${Number(value).toLocaleString()}` : `${Number(value).toLocaleString()} uds`,
+                          name
+                        ]}
+                        labelFormatter={(label, items) => {
+                          const fullName = items?.[0]?.payload?.fullName || label;
+                          const pct = items?.[0]?.payload?.porcentaje;
+                          return `${fullName} (${pct}% del valor total)`;
+                        }}
+                        contentStyle={{ borderRadius: '12px', border: '1px solid #e2e8f0', fontSize: '11px' }}
+                      />
+                      <Legend verticalAlign="top" height={30} wrapperStyle={{ fontSize: '11px', fontWeight: 'bold' }} />
+                      <Bar yAxisId="left" dataKey="valor" name="Capital Invertido ($)" fill="#6366f1" radius={[6, 6, 0, 0]} />
+                      <Bar yAxisId="right" dataKey="unidades" name="Volumen Stock (uds)" fill="#10b981" radius={[6, 6, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            )}
+
+            {/* Calculated Table of Suppliers */}
+            <div className="border border-slate-100 rounded-xl overflow-hidden bg-white shadow-2xs">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50/75 border-b border-slate-100 text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono">
+                    <th className="py-3 px-4">Proveedor Socio</th>
+                    <th className="py-3 px-4 text-center">Diversidad de SKU</th>
+                    <th className="py-3 px-4 text-right">Volumen Físico</th>
+                    <th className="py-3 px-4 text-right">Valoración de Stock</th>
+                    <th className="py-3 px-4 text-center">Participación de Valoración Relativa</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-xs">
+                  {supplierStats.list.map((sup, idx) => (
+                    <tr key={sup.name} className="hover:bg-slate-50/40 transition">
+                      {/* Name */}
+                      <td className="py-3.5 px-4">
+                        <div className="flex items-center gap-2.5">
+                          <span className="text-slate-400 text-xs font-mono font-bold select-none">#{idx + 1}</span>
+                          <div className="h-7 w-7 rounded-lg bg-indigo-50/50 border border-indigo-100/40 flex items-center justify-center shrink-0">
+                            <Building2 className="h-3.5 w-3.5 text-indigo-500" />
+                          </div>
+                          <span className="font-sans font-semibold text-slate-700 select-all">{sup.name}</span>
+                        </div>
+                      </td>
+
+                      {/* SKU Count */}
+                      <td className="py-3.5 px-4 text-center">
+                        <span className="font-mono bg-slate-100 text-slate-600 font-bold px-2 py-0.5 rounded-md text-[10.5px]">
+                          {sup.skuCount} {sup.skuCount === 1 ? 'SKU' : 'SKUs'}
+                        </span>
+                      </td>
+
+                      {/* Total Quantity */}
+                      <td className="py-3.5 px-4 text-right font-mono">
+                        <div className="font-bold text-slate-700">{sup.totalQty.toLocaleString()}</div>
+                        <div className="text-[9px] text-slate-400">({sup.qtyShare.toFixed(1)}% qty)</div>
+                      </td>
+
+                      {/* Total Cost Value */}
+                      <td className="py-3.5 px-4 text-right font-mono">
+                        <div className="font-extrabold text-indigo-600">
+                          ${sup.totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </div>
+                        <div className="text-[9px] text-slate-400">({sup.valueShare.toFixed(1)}% val)</div>
+                      </td>
+
+                      {/* relative visual progress bar */}
+                      <td className="py-3.5 px-4">
+                        <div className="flex items-center gap-3 justify-center max-w-xs mx-auto">
+                          <div className="flex-1 bg-slate-100 h-2 rounded-full overflow-hidden">
+                            <div 
+                              className="h-full rounded-full bg-indigo-500" 
+                              style={{ width: `${sup.valueShare}%` }}
+                            />
+                          </div>
+                          <span className="text-[10px] font-mono font-extrabold text-slate-500 w-10 text-right">
+                            {sup.valueShare.toFixed(1)}%
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : (
+          <div className="text-center py-12 text-xs text-slate-400 font-medium">
+            Registra SKUs con marcas de proveedores para ver estadísticas de distribución de capital.
+          </div>
+        )}
+      </div>
       <div className="bg-white border border-slate-100 rounded-3xl p-6 shadow-xs">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="space-y-1">
@@ -2698,7 +3324,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 <button
                   onClick={() => setTurnoverTab('all')}
                   className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer select-none ${
-                    turnoverTab === 'all' ? 'bg-white text-indigo-650 shadow-xs' : 'text-slate-500 hover:text-slate-700'
+                    turnoverTab === 'all' ? 'bg-white text-indigo-600 shadow-xs' : 'text-slate-500 hover:text-slate-700'
                   }`}
                 >
                   Todas
@@ -2706,7 +3332,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 <button
                   onClick={() => setTurnoverTab('high')}
                   className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer select-none flex items-center gap-1 ${
-                    turnoverTab === 'high' ? 'bg-white text-emerald-650 shadow-xs' : 'text-slate-500 hover:text-emerald-600'
+                    turnoverTab === 'high' ? 'bg-white text-emerald-600 shadow-xs' : 'text-slate-500 hover:text-emerald-600'
                   }`}
                 >
                   <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
@@ -2715,7 +3341,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 <button
                   onClick={() => setTurnoverTab('medium')}
                   className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer select-none flex items-center gap-1 ${
-                    turnoverTab === 'medium' ? 'bg-white text-blue-650 shadow-xs' : 'text-slate-500 hover:text-blue-600'
+                    turnoverTab === 'medium' ? 'bg-white text-blue-600 shadow-xs' : 'text-slate-500 hover:text-blue-600'
                   }`}
                 >
                   <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
@@ -2724,7 +3350,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 <button
                   onClick={() => setTurnoverTab('low')}
                   className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer select-none flex items-center gap-1 ${
-                    turnoverTab === 'low' ? 'bg-white text-amber-650 shadow-xs' : 'text-slate-500 hover:text-amber-600'
+                    turnoverTab === 'low' ? 'bg-white text-amber-600 shadow-xs' : 'text-slate-500 hover:text-amber-600'
                   }`}
                 >
                   <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />

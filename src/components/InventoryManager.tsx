@@ -1,9 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { InventoryItem, ActivityLog, Order } from '../types';
-import { Package, Plus, Trash2, ShieldAlert, Check, Search, Filter, Printer, QrCode, Download, Sliders, X, LayoutGrid, List, Image as ImageIcon, TrendingUp, Building2, DollarSign, Boxes, FileSpreadsheet } from 'lucide-react';
+import { Package, Plus, Trash2, ShieldAlert, Check, Search, Filter, Printer, QrCode, Download, Sliders, X, LayoutGrid, List, Image as ImageIcon, TrendingUp, Boxes, FileSpreadsheet, Upload, FolderUp, Pencil, Camera, Ruler } from 'lucide-react';
 import QRCode from 'qrcode';
-import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
 
 const LOGISTICS_PLACEHOLDERS = [
@@ -51,6 +50,54 @@ const LOGISTICS_PLACEHOLDERS = [
   }
 ];
 
+/**
+ * Procesa y optimiza un archivo de imagen subido desde el equipo local del usuario.
+ * Utiliza un lienzo HTML5 para redimensionar (máx 960px) y comprimir a DataURL (Base64)
+ * de forma que la imagen sea ultraligera, cargue al instante y sea persistente.
+ */
+const processUploadedImageFile = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    if (!file.type.startsWith('image/')) {
+      reject(new Error('El archivo seleccionado no es una imagen válida (debe ser JPG, PNG, WebP o GIF).'));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const result = e.target?.result as string;
+      const img = new Image();
+      img.onload = () => {
+        const MAX_DIM = 960;
+        let { width, height } = img;
+        if (width > MAX_DIM || height > MAX_DIM) {
+          if (width > height) {
+            height = Math.round((height * MAX_DIM) / width);
+            width = MAX_DIM;
+          } else {
+            width = Math.round((width * MAX_DIM) / height);
+            height = MAX_DIM;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(result);
+          return;
+        }
+        ctx.drawImage(img, 0, 0, width, height);
+        const isPng = file.type === 'image/png';
+        const dataUrl = canvas.toDataURL(isPng ? 'image/png' : 'image/jpeg', 0.85);
+        resolve(dataUrl);
+      };
+      img.onerror = () => resolve(result);
+      img.src = result;
+    };
+    reader.onerror = (err) => reject(err);
+    reader.readAsDataURL(file);
+  });
+};
+
 interface InventoryProps {
   inventory: InventoryItem[];
   onAddInventory: (item: InventoryItem) => Promise<void>;
@@ -60,6 +107,7 @@ interface InventoryProps {
   logs?: ActivityLog[];
   orders?: Order[];
   isReadOnly?: boolean;
+  onNavigateToMetrics?: (sku?: string) => void;
 }
 
 export const InventoryManager: React.FC<InventoryProps> = ({
@@ -70,7 +118,8 @@ export const InventoryManager: React.FC<InventoryProps> = ({
   onUpdateInventoryItem,
   logs = [],
   orders = [],
-  isReadOnly = false
+  isReadOnly = false,
+  onNavigateToMetrics
 }) => {
   const [showForm, setShowForm] = useState(false);
   const [sku, setSku] = useState('');
@@ -142,6 +191,11 @@ export const InventoryManager: React.FC<InventoryProps> = ({
   const [barcode, setBarcode] = useState('');
   const [imageUrl, setImageUrl] = useState('');
 
+  // Recently registered SKU tracking
+  const [lastRegisteredSku, setLastRegisteredSku] = useState<string>(() => {
+    return localStorage.getItem('wms_last_registered_sku') || '';
+  });
+
   // Filtering states
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('Todas');
@@ -180,19 +234,46 @@ export const InventoryManager: React.FC<InventoryProps> = ({
     }
   }, [hiddenCategories, categoryFilter]);
 
-  // SKU History & Trend states
-  const [selectedHistorySku, setSelectedHistorySku] = useState<string>('');
-  const trendSectionRef = useRef<HTMLDivElement>(null);
-
   // Confirmation modal states
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [skuToDelete, setSkuToDelete] = useState('');
   const [printSku, setPrintSku] = useState<string | null>(null);
   const [printCopies, setPrintCopies] = useState<number>(5);
 
+  // Label sizing states in cm (Centímetros)
+  const [labelBaseCm, setLabelBaseCm] = useState<number>(10.0); // Base / Ancho en cm
+  const [labelAltoCm, setLabelAltoCm] = useState<number>(7.0);  // Alto / Altura en cm
+  const [labelSizePreset, setLabelSizePreset] = useState<string>('10x7');
+  const [includeLabelImage, setIncludeLabelImage] = useState<boolean>(true);
+  const [includeLabelBarcode, setIncludeLabelBarcode] = useState<boolean>(true);
+  const [includeLabelDetails, setIncludeLabelDetails] = useState<boolean>(true);
+  const [includeLabelLot, setIncludeLabelLot] = useState<boolean>(true);
+  const [labelLotNumber, setLabelLotNumber] = useState<string>(() => `LOT-${Math.floor(1000 + Math.random() * 9000)}`);
+
   // Report and Printable states
   const [showPrintReport, setShowPrintReport] = useState(false);
   const [reportNotes, setReportNotes] = useState('Official Quarterly Stock Valuation Audit');
+
+  // Image upload states for new SKU registration
+  const [createImageFileName, setCreateImageFileName] = useState('');
+  const [isUploadingCreateImage, setIsUploadingCreateImage] = useState(false);
+  const [isDraggingCreateImage, setIsDraggingCreateImage] = useState(false);
+  const [imageInputMode, setImageInputMode] = useState<'upload' | 'url'>('upload');
+  const createFileInputRef = useRef<HTMLInputElement>(null);
+
+  // Image upload states for Placeholder / Image Assignment Modal
+  const modalFileInputRef = useRef<HTMLInputElement>(null);
+  const [isUploadingModalImage, setIsUploadingModalImage] = useState(false);
+  const [isDraggingModalImage, setIsDraggingModalImage] = useState(false);
+
+  // Edit SKU Modal states
+  const [editingSkuItem, setEditingSkuItem] = useState<InventoryItem | null>(null);
+  const [editFormFields, setEditFormFields] = useState<Partial<InventoryItem>>({});
+  const [editImageFileName, setEditImageFileName] = useState('');
+  const [isUploadingEditImage, setIsUploadingEditImage] = useState(false);
+  const [isDraggingEditImage, setIsDraggingEditImage] = useState(false);
+  const [editImageInputMode, setEditImageInputMode] = useState<'upload' | 'url'>('upload');
+  const editFileInputRef = useRef<HTMLInputElement>(null);
 
   // Placeholder Image Assign states
   const [assigningImageSku, setAssigningImageSku] = useState<string | null>(null);
@@ -517,12 +598,42 @@ export const InventoryManager: React.FC<InventoryProps> = ({
         localStorage.setItem('wms_sku_business_lines', JSON.stringify(mapping));
       } catch (e) {}
 
+      // Make new SKU the first option to fill and inspect in the platform
+      setLastRegisteredSku(newItem.sku);
+      localStorage.setItem('wms_last_registered_sku', newItem.sku);
+
+      // Reset search filter so the newly registered SKU is clearly visible at the top
+      setSearchQuery('');
+      setCategoryFilter('Todas');
+
       setShowForm(false);
       resetForm();
     } catch (err) {
       console.error(err);
     }
   };
+
+  useEffect(() => {
+    if (editingSkuItem) {
+      setEditFormFields({
+        name: editingSkuItem.name || '',
+        description: editingSkuItem.description || '',
+        category: editingSkuItem.category || (securityCategories[0] || 'Electrónicos (Frágil)'),
+        minQty: editingSkuItem.minQty || 10,
+        cost: editingSkuItem.cost ?? 0,
+        supplier: editingSkuItem.supplier || '',
+        expirationDate: editingSkuItem.expirationDate || '',
+        unitWidth: editingSkuItem.unitWidth ?? 30,
+        unitHeight: editingSkuItem.unitHeight ?? 20,
+        unitLength: editingSkuItem.unitLength ?? 20,
+        unitWeight: editingSkuItem.unitWeight ?? 1.0,
+        barcode: editingSkuItem.barcode || '',
+        imageUrl: editingSkuItem.imageUrl || ''
+      });
+      setEditImageFileName('');
+      setEditImageInputMode(editingSkuItem.imageUrl && !editingSkuItem.imageUrl.startsWith('data:') ? 'url' : 'upload');
+    }
+  }, [editingSkuItem, securityCategories]);
 
   const resetForm = () => {
     setSku('');
@@ -540,6 +651,8 @@ export const InventoryManager: React.FC<InventoryProps> = ({
     setInitialQty(0);
     setBarcode('');
     setImageUrl('');
+    setCreateImageFileName('');
+    setImageInputMode('upload');
   };
 
   const triggerDeleteSku = (skuStr: string) => {
@@ -614,260 +727,6 @@ export const InventoryManager: React.FC<InventoryProps> = ({
   const allAvailableCategories = Array.from(new Set([...securityCategories, ...inventory.map(i => i.category)]));
   const categories = ['Todas', ...allAvailableCategories.filter(cat => !hiddenCategories.includes(cat))];
 
-  // Helper to parse logs and construct a historical stock timeline for a given SKU
-  const getSkuHistoryData = (targetSku: string, currentQty: number, activityLogs: ActivityLog[]) => {
-    if (!targetSku) return [];
-
-    const skuLogs = activityLogs
-      .filter(log => {
-        const detailsLower = (log.details || '').toLowerCase();
-        const skuLower = targetSku.toLowerCase();
-        return detailsLower.includes(skuLower);
-      })
-      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-
-    if (skuLogs.length === 0) {
-      return [
-        {
-          timestamp: new Date().toISOString(),
-          dateStr: 'Current',
-          qty: currentQty,
-          action: 'Current Stock',
-          delta: 0
-        }
-      ];
-    }
-
-    const parsedChanges = skuLogs.map(log => {
-      const details = log.details || '';
-      const timestamp = log.timestamp;
-      
-      let dateStr = 'Unknown Date';
-      try {
-        const dateObj = new Date(timestamp);
-        if (!isNaN(dateObj.getTime())) {
-          dateStr = dateObj.toLocaleDateString(undefined, { 
-            month: 'short', 
-            day: 'numeric', 
-            hour: '2-digit', 
-            minute: '2-digit' 
-          });
-        }
-      } catch (e) {}
-
-      const escapedSku = targetSku.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-      // Adjust Inventory Stock absolute transition
-      const adjustRegex = new RegExp(`from\\s+(\\d+)\\s+to\\s+(\\d+)`, 'i');
-      const adjustMatch = details.match(adjustRegex);
-      if (adjustMatch && log.action === 'Adjust Inventory Stock') {
-        const oldQty = parseInt(adjustMatch[1], 10);
-        const newQty = parseInt(adjustMatch[2], 10);
-        return {
-          timestamp,
-          dateStr,
-          action: log.action,
-          type: 'absolute' as const,
-          oldQty,
-          newQty,
-          delta: newQty - oldQty
-        };
-      }
-
-      // Simulated Intake PO delivery
-      const deliveryRegex = new RegExp(`delivery of\\s+(\\d+)\\s+units`, 'i');
-      const deliveryMatch = details.match(deliveryRegex);
-      if (deliveryMatch && (log.action.includes('Delivery') || log.action.includes('Inbound') || log.action.includes('Simulate'))) {
-        const qty = parseInt(deliveryMatch[1], 10);
-        return {
-          timestamp,
-          dateStr,
-          action: log.action,
-          type: 'delta' as const,
-          delta: qty
-        };
-      }
-
-      // Putaway Allocation Complete
-      const putawayRegex = new RegExp(`\\((\\d+)\\s+units\\)`, 'i');
-      const putawayMatch = details.match(putawayRegex);
-      if (putawayMatch && log.action === 'Putaway Allocation Complete') {
-        const qty = parseInt(putawayMatch[1], 10);
-        return {
-          timestamp,
-          dateStr,
-          action: log.action,
-          type: 'delta' as const,
-          delta: qty
-        };
-      }
-
-      // Order Dispatch Completed
-      const dispatchRegex = new RegExp(`${escapedSku}\\s*\\(([-\\+]?\\d+)\\)`, 'i');
-      const dispatchMatch = details.match(dispatchRegex);
-      if (dispatchMatch) {
-        const qty = parseInt(dispatchMatch[1], 10);
-        return {
-          timestamp,
-          dateStr,
-          action: log.action,
-          type: 'delta' as const,
-          delta: qty
-        };
-      }
-
-      // Generic delta parenthesis fallback
-      const generalRegex = /\(([-\+]?\\d+)\)/;
-      const generalMatch = details.match(generalRegex);
-      if (generalMatch) {
-        const qty = parseInt(generalMatch[1], 10);
-        return {
-          timestamp,
-          dateStr,
-          action: log.action,
-          type: 'delta' as const,
-          delta: qty
-        };
-      }
-
-      return {
-        timestamp,
-        dateStr,
-        action: log.action,
-        type: 'delta' as const,
-        delta: 0
-      };
-    });
-
-    const historyPoints: { timestamp: string; dateStr: string; qty: number; action: string; delta: number }[] = [];
-    let rollingQty = currentQty;
-
-    // Insert present state
-    historyPoints.unshift({
-      timestamp: new Date().toISOString(),
-      dateStr: 'Current',
-      qty: currentQty,
-      action: 'Current Stock State',
-      delta: 0
-    });
-
-    // Go backwards in time
-    for (let i = parsedChanges.length - 1; i >= 0; i--) {
-      const change = parsedChanges[i];
-      if (change.type === 'absolute') {
-        historyPoints.unshift({
-          timestamp: change.timestamp,
-          dateStr: change.dateStr,
-          qty: change.newQty,
-          action: change.action,
-          delta: change.delta
-        });
-        rollingQty = change.oldQty;
-      } else {
-        historyPoints.unshift({
-          timestamp: change.timestamp,
-          dateStr: change.dateStr,
-          qty: rollingQty,
-          action: change.action,
-          delta: change.delta
-        });
-        rollingQty = Math.max(0, rollingQty - change.delta);
-      }
-    }
-
-    // Add baseline
-    const firstLog = parsedChanges[0];
-    if (firstLog) {
-      historyPoints.unshift({
-        timestamp: new Date(new Date(firstLog.timestamp).getTime() - 1800000).toISOString(),
-        dateStr: 'Initial',
-        qty: rollingQty,
-        action: 'Starting Quantity Baseline',
-        delta: 0
-      });
-    }
-
-    return historyPoints;
-  };
-
-  // Supplier Summary Calculations
-  const supplierStats = React.useMemo(() => {
-    const statsMap: { [supplierName: string]: { skuCount: number; totalQty: number; totalValue: number } } = {};
-    let totalInventoryValue = 0;
-    let totalInventoryQty = 0;
-
-    inventory.forEach((item) => {
-      const supplierName = (item.supplier || 'Unassigned / Unknown').trim();
-      const cost = item.cost || 0;
-      const qty = item.qty || 0;
-      const value = qty * cost;
-
-      if (!statsMap[supplierName]) {
-        statsMap[supplierName] = {
-          skuCount: 0,
-          totalQty: 0,
-          totalValue: 0
-        };
-      }
-
-      statsMap[supplierName].skuCount += 1;
-      statsMap[supplierName].totalQty += qty;
-      statsMap[supplierName].totalValue += value;
-
-      totalInventoryValue += value;
-      totalInventoryQty += qty;
-    });
-
-    const list = Object.entries(statsMap).map(([name, data]) => ({
-      name,
-      ...data,
-      valueShare: totalInventoryValue > 0 ? (data.totalValue / totalInventoryValue) * 100 : 0,
-      qtyShare: totalInventoryQty > 0 ? (data.totalQty / totalInventoryQty) * 100 : 0
-    }));
-
-    // Sort by total value descending
-    list.sort((a, b) => b.totalValue - a.totalValue);
-
-    return {
-      list,
-      totalInventoryValue,
-      totalInventoryQty,
-      leadingSupplier: list.length > 0 ? list[0] : null
-    };
-  }, [inventory]);
-
-  const activeSku = selectedHistorySku || (inventory.length > 0 ? inventory[0].sku : '');
-  const activeItem = inventory.find(i => i.sku === activeSku);
-  const historyData = activeSku && activeItem ? getSkuHistoryData(activeSku, activeItem.qty, logs) : [];
-
-  const CustomTooltip = ({ active, payload }: any) => {
-    if (active && payload && payload.length) {
-      const data = payload[0].payload;
-      return (
-        <div className="bg-slate-900 text-white p-3.5 rounded-xl border border-slate-800 shadow-xl max-w-xs text-xs space-y-1.5 font-sans">
-          <div className="font-bold text-slate-300 font-mono text-[9px] uppercase tracking-wider">{data.dateStr}</div>
-          <div className="flex justify-between gap-4">
-            <span className="text-slate-400 font-medium">Nivel de Cantidad:</span>
-            <span className="font-bold text-indigo-400 font-mono text-sm">{data.qty} unidades</span>
-          </div>
-          {data.delta !== 0 && (
-            <div className="flex justify-between gap-4 text-[11px]">
-              <span className="text-slate-400">Ajuste delta neto:</span>
-              <span className={`font-mono font-bold ${data.delta > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                {data.delta > 0 ? `+${data.delta}` : data.delta} unidades
-              </span>
-            </div>
-          )}
-          <div className="text-[10px] text-indigo-200 bg-indigo-950/40 p-2 rounded-lg border border-indigo-900/30 leading-relaxed">
-            <span className="font-bold block text-[8px] uppercase tracking-wider text-indigo-300/80 mb-0.5">Acción Registrada</span>
-            {data.action}
-          </div>
-        </div>
-      );
-    }
-    return null;
-  };
-
   return (
     <div className="space-y-6">
       
@@ -885,10 +744,11 @@ export const InventoryManager: React.FC<InventoryProps> = ({
         <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={() => handleExportExcel()}
-            className="bg-emerald-650 hover:bg-emerald-700 text-white border border-emerald-750 px-4 py-2 rounded-xl text-xs font-extrabold uppercase tracking-wider flex items-center gap-1.5 shadow-sm cursor-pointer transition-all duration-150 active:scale-98"
+            className="bg-emerald-600 hover:bg-emerald-700 text-white border border-emerald-700 px-4 py-2 rounded-xl text-xs font-extrabold uppercase tracking-wider flex items-center gap-2 shadow-sm cursor-pointer transition-all duration-150 active:scale-98"
+            title="Exportar catálogo de SKU a archivo Excel (.xlsx)"
           >
-            <FileSpreadsheet className="h-4.5 w-4.5 text-emerald-100" />
-            Exportar Reporte a Excel
+            <FileSpreadsheet className="h-4.5 w-4.5 text-white shrink-0" />
+            <span>Exportar Reporte a Excel</span>
           </button>
           {!showForm && !isReadOnly && (
             <button
@@ -900,285 +760,6 @@ export const InventoryManager: React.FC<InventoryProps> = ({
             </button>
           )}
         </div>
-      </div>
-
-      {/* Stock History Trend Chart Card */}
-      <div 
-        ref={trendSectionRef}
-        className="bg-white border border-slate-100 rounded-2xl shadow-sm p-6 space-y-6"
-      >
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-150 pb-4">
-          <div>
-            <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-              <TrendingUp className="h-5 w-5 text-indigo-500" />
-              Analizador de Tendencias de Cantidad de Stock de SKU
-            </h3>
-            <p className="text-[11px] text-slate-400 mt-0.5">
-              Visualiza las fluctuaciones de cantidad históricas y en tiempo real basadas en registros físicos automatizados.
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider font-mono">Seleccionar SKU para Análisis:</label>
-            <select
-              value={activeSku}
-              onChange={(e) => setSelectedHistorySku(e.target.value)}
-              className="text-xs font-bold rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-750 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500"
-            >
-              {inventory.map((item) => (
-                <option key={item.sku} value={item.sku}>
-                  {item.sku} — {item.name}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        {activeItem ? (
-          <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-            {/* Left stats metrics list */}
-            <div className="lg:col-span-1 flex flex-col gap-3.5">
-              {/* Product Info Mini Block */}
-              <div className="p-4 bg-slate-50 border border-slate-100 rounded-xl space-y-2">
-                <div className="text-[10px] uppercase font-bold text-slate-400 font-mono">SKU Seleccionado Actual</div>
-                <div className="font-mono font-black text-slate-800 text-sm tracking-tight truncate" title={activeItem.sku}>
-                  {activeItem.sku}
-                </div>
-                <div className="text-xs font-bold text-slate-600 line-clamp-2">
-                  {activeItem.name}
-                </div>
-                <div className="text-[10px] bg-indigo-50 text-indigo-700 font-bold font-mono px-2 py-0.5 rounded-md inline-block uppercase">
-                  {activeItem.category}
-                </div>
-              </div>
-
-              {/* Stats values */}
-              <div className="grid grid-cols-2 lg:grid-cols-1 gap-3">
-                <div className="p-3 bg-indigo-50/50 border border-indigo-100 rounded-xl">
-                  <span className="block text-[9px] uppercase font-bold text-slate-400 font-mono">Cantidad Actual</span>
-                  <span className="text-lg font-black font-mono text-indigo-700">{activeItem.qty} <span className="text-xs font-medium text-slate-500">unidades</span></span>
-                </div>
-                
-                <div className="p-3 bg-emerald-50/50 border border-emerald-100 rounded-xl">
-                  <span className="block text-[9px] uppercase font-bold text-slate-400 font-mono">Objetivo de Seguridad</span>
-                  <span className="text-lg font-black font-mono text-emerald-700">{activeItem.minQty} <span className="text-xs font-medium text-slate-500">unidades</span></span>
-                </div>
-
-                <div className="col-span-2 lg:col-span-1 p-3 bg-slate-50 border border-slate-100 rounded-xl">
-                  <span className="block text-[9px] uppercase font-bold text-slate-400 font-mono">Registros de Historial</span>
-                  <span className="text-lg font-black font-mono text-slate-700">
-                    {logs.filter(log => (log.details || '').toLowerCase().includes(activeItem.sku.toLowerCase())).length} <span className="text-xs font-medium text-slate-500">entradas</span>
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Recharts chart on the right */}
-            <div className="lg:col-span-3 bg-slate-50/50 border border-slate-100 rounded-xl p-4 flex flex-col justify-between min-h-[340px]">
-              {historyData.length > 0 ? (
-                <div className="w-full h-[300px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart
-                      data={historyData}
-                      margin={{ top: 10, right: 20, left: -20, bottom: 5 }}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                      <XAxis 
-                        dataKey="dateStr" 
-                        stroke="#94a3b8" 
-                        fontSize={9} 
-                        tickLine={false} 
-                        axisLine={false}
-                        dy={8}
-                      />
-                      <YAxis 
-                        stroke="#94a3b8" 
-                        fontSize={9} 
-                        tickLine={false} 
-                        axisLine={false}
-                        dx={-8}
-                      />
-                      <Tooltip content={<CustomTooltip />} />
-                      <Legend 
-                        verticalAlign="top" 
-                        height={36} 
-                        iconType="circle"
-                        iconSize={8}
-                        wrapperStyle={{ fontSize: '10px', fontWeight: 'bold', fontFamily: 'monospace' }}
-                      />
-                      <Line
-                        name="Nivel Físico de Cantidad de SKU"
-                        type="monotone"
-                        dataKey="qty"
-                        stroke="#4f46e5"
-                        strokeWidth={2.5}
-                        dot={{ r: 3.5, strokeWidth: 1.5, stroke: "#ffffff", fill: "#4f46e5" }}
-                        activeDot={{ r: 6, strokeWidth: 1, stroke: "#ffffff", fill: "#312e81" }}
-                        animationDuration={1200}
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-              ) : (
-                <div className="flex flex-col items-center justify-center grow text-center py-12 px-4 space-y-2 select-none">
-                  <div className="p-3 bg-indigo-50 text-indigo-600 rounded-full">
-                    <TrendingUp className="h-6 w-6 stroke-[1.5]" />
-                  </div>
-                  <h4 className="text-xs font-bold text-slate-700">Esperando Actividad de Registro</h4>
-                  <p className="text-[11px] text-slate-400 max-w-sm">
-                    Solo se encontró un único punto de datos para este SKU. ¡Intente ajustar el nivel de stock o simular algunas órdenes de entrada para generar nuevos datos históricos de tendencia!
-                  </p>
-                </div>
-              )}
-              
-              <div className="flex items-center justify-between text-[9px] text-slate-400 font-mono mt-2 pt-2 border-t border-slate-100">
-                <span>Eje del Tiempo (Más antiguo → Más reciente)</span>
-                <span>Todos los valores están sincronizados automáticamente con Supabase</span>
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="text-center py-12 text-xs text-slate-400 font-medium">
-            No hay productos registrados en el inventario para realizar análisis históricos.
-          </div>
-        )}
-      </div>
-
-      {/* Tablero de Capital de Proveedores y Participación de Volumen */}
-      <div className="bg-white border border-slate-100 rounded-2xl shadow-sm p-6 space-y-6">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-150 pb-4">
-          <div>
-            <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-              <Building2 className="h-5 w-5 text-indigo-500" />
-              Análisis de Capital y Volumen de Proveedores
-            </h3>
-            <p className="text-[11px] text-slate-400 mt-0.5">
-              Distribución calculada de la inversión total de capital y la contribución del volumen de stock por fabricante registrado.
-            </p>
-          </div>
-          <div className="text-[10px] font-mono font-bold bg-slate-100 text-slate-600 px-3 py-1 rounded-md border border-slate-200/50">
-            {supplierStats.list.length} Proveedores Registrados
-          </div>
-        </div>
-
-        {supplierStats.list.length > 0 ? (
-          <div className="space-y-6">
-            {/* Top Stat Cards Row */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="p-4 bg-slate-50 border border-slate-100 rounded-xl flex items-center gap-4">
-                <div className="p-3 bg-indigo-50 text-indigo-600 rounded-xl shrink-0">
-                  <DollarSign className="h-5 w-5" />
-                </div>
-                <div>
-                  <span className="block text-[9px] uppercase font-bold text-slate-400 font-mono">Capital Total Invertido</span>
-                  <span className="text-base font-black font-mono text-slate-800">
-                    ${supplierStats.totalInventoryValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </span>
-                </div>
-              </div>
-
-              <div className="p-4 bg-slate-50 border border-slate-100 rounded-xl flex items-center gap-4">
-                <div className="p-3 bg-blue-50 text-blue-600 rounded-xl shrink-0">
-                  <Boxes className="h-5 w-5" />
-                </div>
-                <div>
-                  <span className="block text-[9px] uppercase font-bold text-slate-400 font-mono">Volumen Total de Stock</span>
-                  <span className="text-base font-black font-mono text-slate-800">
-                    {supplierStats.totalInventoryQty.toLocaleString()} <span className="text-xs font-semibold text-slate-400">unidades</span>
-                  </span>
-                </div>
-              </div>
-
-              <div className="p-4 bg-slate-50 border border-slate-100 rounded-xl flex items-center gap-4">
-                <div className="p-3 bg-emerald-50 text-emerald-600 rounded-xl shrink-0">
-                  <TrendingUp className="h-5 w-5" />
-                </div>
-                <div className="min-w-0">
-                  <span className="block text-[9px] uppercase font-bold text-slate-400 font-mono">Socio Comercial Principal</span>
-                  <span className="text-base font-black font-mono text-slate-800 block truncate" title={supplierStats.leadingSupplier?.name}>
-                    {supplierStats.leadingSupplier?.name || 'N/A'}
-                  </span>
-                  {supplierStats.leadingSupplier && (
-                    <span className="text-[10px] font-sans font-semibold text-emerald-600">
-                      Posee el {supplierStats.leadingSupplier.valueShare.toFixed(1)}% de participación de valoración
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Calculated Table of Suppliers */}
-            <div className="border border-slate-100 rounded-xl overflow-hidden">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-slate-50/75 border-b border-slate-100 text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono">
-                    <th className="py-3 px-4">Proveedor Socio</th>
-                    <th className="py-3 px-4 text-center">Diversidad de SKU</th>
-                    <th className="py-3 px-4 text-right">Volumen Físico</th>
-                    <th className="py-3 px-4 text-right">Valoración de Stock</th>
-                    <th className="py-3 px-4 text-center">Participación de Valoración Relativa</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-xs">
-                  {supplierStats.list.map((sup, idx) => (
-                    <tr key={sup.name} className="hover:bg-slate-50/40 transition">
-                      {/* Name */}
-                      <td className="py-3.5 px-4">
-                        <div className="flex items-center gap-2.5">
-                          <span className="text-slate-400 text-xs font-mono font-bold select-none">#{idx + 1}</span>
-                          <div className="h-7 w-7 rounded-lg bg-indigo-50/50 border border-indigo-100/40 flex items-center justify-center shrink-0">
-                            <Building2 className="h-3.5 w-3.5 text-indigo-500" />
-                          </div>
-                          <span className="font-sans font-semibold text-slate-700 select-all">{sup.name}</span>
-                        </div>
-                      </td>
-
-                      {/* SKU Count */}
-                      <td className="py-3.5 px-4 text-center">
-                        <span className="font-mono bg-slate-100 text-slate-600 font-bold px-2 py-0.5 rounded-md text-[10.5px]">
-                          {sup.skuCount} {sup.skuCount === 1 ? 'SKU' : 'SKUs'}
-                        </span>
-                      </td>
-
-                      {/* Total Quantity */}
-                      <td className="py-3.5 px-4 text-right font-mono">
-                        <div className="font-bold text-slate-700">{sup.totalQty.toLocaleString()}</div>
-                        <div className="text-[9px] text-slate-400">({sup.qtyShare.toFixed(1)}% qty)</div>
-                      </td>
-
-                      {/* Total Cost Value */}
-                      <td className="py-3.5 px-4 text-right font-mono">
-                        <div className="font-extrabold text-indigo-600">
-                          ${sup.totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </div>
-                        <div className="text-[9px] text-slate-400">({sup.valueShare.toFixed(1)}% val)</div>
-                      </td>
-
-                      {/* relative visual progress bar */}
-                      <td className="py-3.5 px-4">
-                        <div className="flex items-center gap-3 justify-center max-w-xs mx-auto">
-                          <div className="flex-1 bg-slate-100 h-2 rounded-full overflow-hidden">
-                            <div 
-                              className="h-full rounded-full bg-indigo-500" 
-                              style={{ width: `${sup.valueShare}%` }}
-                            />
-                          </div>
-                          <span className="text-[10px] font-mono font-extrabold text-slate-500 w-10 text-right">
-                            {sup.valueShare.toFixed(1)}%
-                          </span>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        ) : (
-          <div className="text-center py-12 text-xs text-slate-400 font-medium animate-pulse">
-            Registra SKUs con marcas de proveedores para ver estadísticas de distribución de capital.
-          </div>
-        )}
       </div>
 
       {/* Formulario de registro de SKU */}
@@ -1203,6 +784,7 @@ export const InventoryManager: React.FC<InventoryProps> = ({
                 value={sku}
                 onChange={(e) => setSku(e.target.value)}
                 placeholder="ej. CPU-RYZEN-59"
+                autoFocus
                 className="w-full text-xs font-mono font-bold rounded-lg border border-slate-200 bg-white p-2.5 text-slate-700 focus:border-blue-500 focus:outline-none transition hover:border-slate-300"
                 required
               />
@@ -1457,79 +1039,221 @@ export const InventoryManager: React.FC<InventoryProps> = ({
 
             <div className="col-span-12 md:col-span-6 flex flex-col justify-between">
               <div>
-                <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1.5 tracking-wider">URL de la Imagen de Miniatura del Producto</label>
-                <div className="flex gap-2">
-                  <input
-                    type="url"
-                    value={imageUrl}
-                    onChange={(e) => setImageUrl(e.target.value)}
-                    placeholder="ej. https://images.unsplash.com/photo-... o URL de marcador de posición"
-                    className="grow text-xs rounded-lg border border-slate-200 bg-white p-2.5 text-slate-700 focus:border-blue-500 focus:outline-none font-mono transition hover:border-slate-300"
-                  />
-                  <div className="flex gap-1 shrink-0">
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                    Fotografía / Imagen del SKU
+                  </label>
+                  <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg text-[9px] font-bold">
                     <button
                       type="button"
-                      onClick={() => {
-                        const query = name ? name.trim() : sku ? sku.trim() : category;
-                        const categoryLower = category.toLowerCase();
-                        let selectedUrl = '';
-                        if (categoryLower.includes('electr') || categoryLower.includes('electron')) {
-                          selectedUrl = 'https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=150&h=150&q=80';
-                        } else if (categoryLower.includes('peligro') || categoryLower.includes('hazmat') || categoryLower.includes('combust')) {
-                          selectedUrl = 'https://images.unsplash.com/photo-1616401784845-180882ba9ba8?auto=format&fit=crop&w=150&h=150&q=80';
-                        } else if (categoryLower.includes('sensor') || categoryLower.includes('calib')) {
-                          selectedUrl = 'https://images.unsplash.com/photo-1555664424-778a1e5e1b48?auto=format&fit=crop&w=150&h=150&q=80';
-                        } else if (categoryLower.includes('cable') || categoryLower.includes('granel')) {
-                          selectedUrl = 'https://images.unsplash.com/photo-1551703599-6b3dbb57c24e?auto=format&fit=crop&w=150&h=150&q=80';
-                        } else if (categoryLower.includes('ropa') || categoryLower.includes('textil') || categoryLower.includes('apparel')) {
-                          selectedUrl = 'https://images.unsplash.com/photo-1523381210434-271e8be1f52b?auto=format&fit=crop&w=150&h=150&q=80';
-                        } else {
-                          selectedUrl = `https://picsum.photos/seed/${encodeURIComponent(query)}/150/150`;
-                        }
-                        setImageUrl(selectedUrl);
-                      }}
-                      className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold px-2.5 py-2 rounded-lg transition flex items-center gap-1 cursor-pointer active:scale-95"
-                      title="Auto-generar URL de imagen basada en el nombre y categoría"
+                      onClick={() => setImageInputMode('upload')}
+                      className={`px-2 py-0.5 rounded-md transition flex items-center gap-1 cursor-pointer ${
+                        imageInputMode === 'upload'
+                          ? 'bg-white text-indigo-700 shadow-2xs'
+                          : 'text-slate-500 hover:text-slate-800'
+                      }`}
                     >
-                      <span>✨ Auto</span>
+                      <FolderUp className="h-3 w-3" />
+                      <span>Subir del Equipo</span>
                     </button>
                     <button
                       type="button"
-                      onClick={() => {
-                        const seed = sku ? sku.trim().toUpperCase() : 'WMS';
-                        setImageUrl(`https://picsum.photos/seed/${encodeURIComponent(seed)}/150/150`);
-                      }}
-                      className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-bold px-2.5 py-2 rounded-lg transition flex items-center gap-1 cursor-pointer active:scale-95"
-                      title="Generar marcador de posición geométrico aleatorio directo"
+                      onClick={() => setImageInputMode('url')}
+                      className={`px-2 py-0.5 rounded-md transition flex items-center gap-1 cursor-pointer ${
+                        imageInputMode === 'url'
+                          ? 'bg-white text-indigo-700 shadow-2xs'
+                          : 'text-slate-500 hover:text-slate-800'
+                      }`}
                     >
-                      <span>🎲 Semilla</span>
+                      <span>URL / Auto</span>
                     </button>
                   </div>
                 </div>
-              </div>
 
-              <div className="flex items-center gap-3 bg-slate-50 border border-slate-100 p-2.5 rounded-xl shrink-0 mt-3">
-                {imageUrl ? (
-                  <img
-                    src={imageUrl}
-                    alt="Vista previa"
-                    referrerPolicy="no-referrer"
-                    className="h-11 w-11 object-cover rounded-lg border border-slate-200"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?auto=format&fit=crop&w=150&h=150&q=80';
+                {/* Hidden File Input */}
+                <input
+                  type="file"
+                  ref={createFileInputRef}
+                  accept="image/*"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      try {
+                        setIsUploadingCreateImage(true);
+                        setCreateImageFileName(file.name);
+                        const dataUrl = await processUploadedImageFile(file);
+                        setImageUrl(dataUrl);
+                      } catch (err: any) {
+                        alert(err?.message || 'Error al procesar la imagen.');
+                      } finally {
+                        setIsUploadingCreateImage(false);
+                      }
+                    }
+                  }}
+                />
+
+                {imageInputMode === 'upload' ? (
+                  <div
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      setIsDraggingCreateImage(true);
                     }}
-                  />
+                    onDragLeave={() => setIsDraggingCreateImage(false)}
+                    onDrop={async (e) => {
+                      e.preventDefault();
+                      setIsDraggingCreateImage(false);
+                      const file = e.dataTransfer.files?.[0];
+                      if (file && file.type.startsWith('image/')) {
+                        try {
+                          setIsUploadingCreateImage(true);
+                          setCreateImageFileName(file.name);
+                          const dataUrl = await processUploadedImageFile(file);
+                          setImageUrl(dataUrl);
+                        } catch (err: any) {
+                          alert(err?.message || 'Error al procesar la imagen.');
+                        } finally {
+                          setIsUploadingCreateImage(false);
+                        }
+                      }
+                    }}
+                    className={`border-2 border-dashed rounded-xl p-3 text-center transition cursor-pointer flex flex-col items-center justify-center gap-2 ${
+                      isDraggingCreateImage
+                        ? 'border-indigo-500 bg-indigo-50/70 scale-[1.01]'
+                        : 'border-slate-250 bg-slate-50 hover:bg-slate-100/80 hover:border-indigo-300'
+                    }`}
+                    onClick={() => createFileInputRef.current?.click()}
+                  >
+                    <div className="h-8 w-8 rounded-full bg-white shadow-2xs border border-slate-200 flex items-center justify-center text-indigo-600">
+                      {isUploadingCreateImage ? (
+                        <span className="animate-spin text-xs">⏳</span>
+                      ) : (
+                        <Upload className="h-4 w-4" />
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-slate-700">
+                        {isUploadingCreateImage ? 'Procesando imagen...' : 'Haz clic para seleccionar o arrastra una imagen'}
+                      </p>
+                      <p className="text-[10px] text-slate-400 mt-0.5">
+                        JPG, PNG, WebP o GIF (Optimización y compresión automática)
+                      </p>
+                    </div>
+                  </div>
                 ) : (
-                  <div className="h-11 w-11 rounded-lg border border-dashed border-slate-300 bg-slate-100 flex items-center justify-center text-slate-400">
-                    <ImageIcon className="h-5 w-5" />
+                  <div className="space-y-2">
+                    <div className="flex gap-2">
+                      <input
+                        type="url"
+                        value={imageUrl}
+                        onChange={(e) => {
+                          setImageUrl(e.target.value);
+                          setCreateImageFileName('');
+                        }}
+                        placeholder="https://images.unsplash.com/... o enlace web"
+                        className="grow text-xs rounded-lg border border-slate-200 bg-white p-2.5 text-slate-700 focus:border-blue-500 focus:outline-none font-mono transition hover:border-slate-300"
+                      />
+                      <div className="flex gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const query = name ? name.trim() : sku ? sku.trim() : category;
+                            const categoryLower = category.toLowerCase();
+                            let selectedUrl = '';
+                            if (categoryLower.includes('electr') || categoryLower.includes('electron')) {
+                              selectedUrl = 'https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=150&h=150&q=80';
+                            } else if (categoryLower.includes('peligro') || categoryLower.includes('hazmat') || categoryLower.includes('combust')) {
+                              selectedUrl = 'https://images.unsplash.com/photo-1616401784845-180882ba9ba8?auto=format&fit=crop&w=150&h=150&q=80';
+                            } else if (categoryLower.includes('sensor') || categoryLower.includes('calib')) {
+                              selectedUrl = 'https://images.unsplash.com/photo-1555664424-778a1e5e1b48?auto=format&fit=crop&w=150&h=150&q=80';
+                            } else if (categoryLower.includes('cable') || categoryLower.includes('granel')) {
+                              selectedUrl = 'https://images.unsplash.com/photo-1551703599-6b3dbb57c24e?auto=format&fit=crop&w=150&h=150&q=80';
+                            } else if (categoryLower.includes('ropa') || categoryLower.includes('textil') || categoryLower.includes('apparel')) {
+                              selectedUrl = 'https://images.unsplash.com/photo-1523381210434-271e8be1f52b?auto=format&fit=crop&w=150&h=150&q=80';
+                            } else {
+                              selectedUrl = `https://picsum.photos/seed/${encodeURIComponent(query)}/150/150`;
+                            }
+                            setImageUrl(selectedUrl);
+                            setCreateImageFileName('');
+                          }}
+                          className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold px-2.5 py-2 rounded-lg transition flex items-center gap-1 cursor-pointer active:scale-95"
+                          title="Auto-generar URL de imagen basada en el nombre y categoría"
+                        >
+                          <span>✨ Auto</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const seed = sku ? sku.trim().toUpperCase() : 'WMS';
+                            setImageUrl(`https://picsum.photos/seed/${encodeURIComponent(seed)}/150/150`);
+                            setCreateImageFileName('');
+                          }}
+                          className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-bold px-2.5 py-2 rounded-lg transition flex items-center gap-1 cursor-pointer active:scale-95"
+                          title="Generar marcador de posición geométrico aleatorio directo"
+                        >
+                          <span>🎲 Semilla</span>
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 )}
-                <div className="flex flex-col">
-                  <span className="text-[10px] font-bold text-slate-600">Vista Previa de Miniatura</span>
-                  <span className="text-[9px] font-mono text-slate-400 truncate max-w-[200px] md:max-w-[300px]">
-                    {imageUrl || 'Sin imagen cargada'}
-                  </span>
+              </div>
+
+              {/* Vista previa de miniatura */}
+              <div className="flex items-center justify-between gap-3 bg-slate-50 border border-slate-150 p-2.5 rounded-xl shrink-0 mt-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  {imageUrl ? (
+                    <img
+                      src={imageUrl}
+                      alt="Vista previa"
+                      referrerPolicy="no-referrer"
+                      className="h-11 w-11 object-cover rounded-lg border border-slate-200 shrink-0 bg-white"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?auto=format&fit=crop&w=150&h=150&q=80';
+                      }}
+                    />
+                  ) : (
+                    <div className="h-11 w-11 rounded-lg border border-dashed border-slate-300 bg-slate-100 flex items-center justify-center text-slate-400 shrink-0">
+                      <ImageIcon className="h-5 w-5" />
+                    </div>
+                  )}
+                  <div className="flex flex-col min-w-0">
+                    <span className="text-[10px] font-bold text-slate-700 flex items-center gap-1">
+                      <span>Vista Previa</span>
+                      {createImageFileName && (
+                        <span className="text-[9px] font-mono bg-indigo-100 text-indigo-700 px-1 rounded truncate max-w-[120px]">
+                          {createImageFileName}
+                        </span>
+                      )}
+                    </span>
+                    <span className="text-[9px] font-mono text-slate-400 truncate max-w-[180px] md:max-w-[260px]">
+                      {imageUrl ? (imageUrl.startsWith('data:') ? 'Imagen local cargada (Base64)' : imageUrl) : 'Sin imagen cargada'}
+                    </span>
+                  </div>
                 </div>
+
+                {imageUrl && (
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => createFileInputRef.current?.click()}
+                      className="text-[10px] text-indigo-600 hover:text-indigo-800 font-bold px-2 py-1 rounded bg-indigo-50 border border-indigo-200 transition cursor-pointer"
+                    >
+                      Cambiar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setImageUrl('');
+                        setCreateImageFileName('');
+                      }}
+                      className="text-[10px] text-rose-500 hover:text-rose-700 font-bold px-1.5 py-1 rounded hover:bg-rose-50 transition cursor-pointer"
+                      title="Quitar imagen"
+                    >
+                      ✕ Quitar
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -1613,10 +1337,10 @@ export const InventoryManager: React.FC<InventoryProps> = ({
 
             <button
               onClick={() => handleExportExcel()}
-              className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white border border-emerald-750 px-3.5 py-2 rounded-lg text-xs font-extrabold transition shadow-sm cursor-pointer active:scale-95 duration-150"
+              className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white border border-emerald-700 px-3.5 py-2 rounded-lg text-xs font-extrabold transition shadow-sm cursor-pointer active:scale-95 duration-150"
               title="Descargar la lista de stock actual filtrada como un archivo Excel (.xlsx)"
             >
-              <FileSpreadsheet className="h-4 w-4 text-emerald-100" />
+              <FileSpreadsheet className="h-4 w-4 text-white shrink-0" />
               <span>Exportar Excel</span>
             </button>
           </div>
@@ -1812,9 +1536,16 @@ export const InventoryManager: React.FC<InventoryProps> = ({
                             )}
                           </button>
                           <div>
-                            <span className="font-mono font-black text-slate-800 text-xs select-all block">
-                              {item.sku}
-                            </span>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="font-mono font-black text-slate-800 text-xs select-all block">
+                                {item.sku}
+                              </span>
+                              {item.sku.toUpperCase() === lastRegisteredSku.toUpperCase() && (
+                                <span className="text-[9px] font-mono font-bold bg-emerald-100 text-emerald-800 border border-emerald-250 px-1.5 py-0.2 rounded uppercase shrink-0">
+                                  ✨ Recién Registrado
+                                </span>
+                              )}
+                            </div>
                             <span className="block font-sans text-xs text-slate-600 font-bold mt-0.5">
                               {item.name}
                             </span>
@@ -2026,20 +1757,15 @@ export const InventoryManager: React.FC<InventoryProps> = ({
                       {/* Delete command column */}
                       <td className="py-4 text-right">
                         <div className="flex justify-end gap-1.5">
-                          <button
-                            onClick={() => {
-                              setSelectedHistorySku(item.sku);
-                              trendSectionRef.current?.scrollIntoView({ behavior: 'smooth' });
-                            }}
-                            className={`transition p-1.5 rounded-lg ${
-                              activeSku === item.sku 
-                                ? 'text-indigo-600 bg-indigo-50 font-bold' 
-                                : 'text-slate-300 hover:text-indigo-600 hover:bg-indigo-50'
-                            }`}
-                            title="Analyze SKU Stock Level Trend History"
-                          >
-                            <TrendingUp className="h-4 w-4" />
-                          </button>
+                          {onNavigateToMetrics && (
+                            <button
+                              onClick={() => onNavigateToMetrics(item.sku)}
+                              className="text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition p-1.5 rounded-lg cursor-pointer"
+                              title="Ver Gráfica de Tendencia en Métricas"
+                            >
+                              <TrendingUp className="h-4 w-4" />
+                            </button>
+                          )}
                           <button
                             onClick={() => {
                               setSelectedQrSku(item.sku);
@@ -2049,6 +1775,13 @@ export const InventoryManager: React.FC<InventoryProps> = ({
                             title="Generar Código QR de SKU"
                           >
                             <QrCode className="h-4 w-4" />
+                          </button>
+                          <button
+                            onClick={() => setEditingSkuItem(item)}
+                            className="text-slate-300 hover:text-indigo-600 transition p-1.5 rounded-lg hover:bg-indigo-50"
+                            title="Editar SKU e Información / Subir Foto"
+                          >
+                            <Pencil className="h-4 w-4" />
                           </button>
                           <button
                             onClick={() => setAssigningImageSku(item.sku)}
@@ -2181,10 +1914,17 @@ export const InventoryManager: React.FC<InventoryProps> = ({
                     <div className="p-4 flex-grow flex flex-col justify-between">
                       <div>
                         {/* SKU Tag & Cost */}
-                        <div className="flex items-center justify-between mb-1.5">
-                          <span className="text-[10px] font-mono font-bold text-slate-400 tracking-wider">
-                            {item.sku}
-                          </span>
+                        <div className="flex items-center justify-between mb-1.5 flex-wrap gap-1">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[10px] font-mono font-bold text-slate-700 tracking-wider">
+                              {item.sku}
+                            </span>
+                            {item.sku.toUpperCase() === lastRegisteredSku.toUpperCase() && (
+                              <span className="text-[8px] font-mono font-bold bg-emerald-100 text-emerald-800 border border-emerald-250 px-1 py-0.2 rounded uppercase shrink-0">
+                                ✨ Recién Registrado
+                              </span>
+                            )}
+                          </div>
                           {item.cost !== undefined && (
                             <span className="text-xs font-bold text-slate-600 font-mono">
                               ${item.cost.toFixed(2)}
@@ -2422,23 +2162,26 @@ export const InventoryManager: React.FC<InventoryProps> = ({
                           <QrCode className="h-3.5 w-3.5" />
                           <span>Labels QR</span>
                         </button>
-                        <button
-                          onClick={() => {
-                            setSelectedHistorySku(item.sku);
-                            trendSectionRef.current?.scrollIntoView({ behavior: 'smooth' });
-                          }}
-                          className={`font-bold px-2 py-1 rounded text-[10px] transition cursor-pointer flex items-center gap-1 ${
-                            activeSku === item.sku 
-                              ? 'text-indigo-700 bg-indigo-100/60 border border-indigo-200' 
-                              : 'text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50/80'
-                          }`}
-                        >
-                          <TrendingUp className="h-3.5 w-3.5" />
-                          <span>View Trend</span>
-                        </button>
+                        {onNavigateToMetrics && (
+                          <button
+                            onClick={() => onNavigateToMetrics(item.sku)}
+                            className="font-bold px-2 py-1 rounded text-[10px] transition cursor-pointer flex items-center gap-1 text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50/80"
+                            title="Ver Gráfica de Tendencia en Métricas"
+                          >
+                            <TrendingUp className="h-3.5 w-3.5" />
+                            <span>Ver Gráfica</span>
+                          </button>
+                        )}
                       </div>
 
                       <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => setEditingSkuItem(item)}
+                          className="text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 p-1.5 rounded-lg transition"
+                          title="Editar SKU e Información / Subir Foto"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
                         <button
                           onClick={() => {
                             setPrintSku(item.sku);
@@ -3072,93 +2815,528 @@ export const InventoryManager: React.FC<InventoryProps> = ({
         </div>
       )}
 
-      {/* QUICK LABEL PRINT MODAL FOR INDIVIDUAL SKU RECIEPT */}
+      {/* LABEL PRINT MODAL WITH CUSTOM CM DIMENSIONS (BASE AND ALTO) */}
       {printSku && (() => {
         const product = inventory.find(i => i.sku === printSku);
         if (!product) return null;
 
+        const presets = [
+          { id: '10x15', name: '10 × 15 cm', desc: 'Tarima / Envío', base: 10.0, alto: 15.0 },
+          { id: '10x7.5', name: '10 × 7.5 cm', desc: 'Estándar WMS', base: 10.0, alto: 7.5 },
+          { id: '10x5', name: '10 × 5 cm', desc: 'Cajas / Pasillos', base: 10.0, alto: 5.0 },
+          { id: '7.5x5', name: '7.5 × 5 cm', desc: 'Mediana', base: 7.5, alto: 5.0 },
+          { id: '5x3', name: '5 × 3 cm', desc: 'Miniatura / Piezas', base: 5.0, alto: 3.0 },
+        ];
+
+        const handleApplyPreset = (p: typeof presets[0]) => {
+          setLabelSizePreset(p.id);
+          setLabelBaseCm(p.base);
+          setLabelAltoCm(p.alto);
+        };
+
+        const handlePrint = () => {
+          window.print();
+        };
+
         return (
-          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 font-sans select-none animate-fade-in">
-            <div className="bg-white rounded-3xl border border-slate-100 shadow-xl max-w-sm w-full p-6 space-y-4">
-              <div className="border-b border-slate-100 pb-2.5 flex justify-between items-center text-slate-700">
-                <span className="text-xs font-mono font-black uppercase">Imprimir Etiquetas (Barcode Station)</span>
-                <button onClick={() => setPrintSku(null)} className="text-slate-400 font-extrabold hover:text-slate-650">✕</button>
-              </div>
+          <>
+            {/* Dynamic Print Stylesheet for exact physical centimeter sizing */}
+            <style>{`
+              @media print {
+                body * {
+                  visibility: hidden !important;
+                }
+                #printable-sku-label-station,
+                #printable-sku-label-station * {
+                  visibility: visible !important;
+                }
+                #printable-sku-label-station {
+                  position: absolute !important;
+                  left: 0 !important;
+                  top: 0 !important;
+                  width: 100% !important;
+                  display: block !important;
+                  background: white !important;
+                  margin: 0 !important;
+                  padding: 0 !important;
+                }
+                @page {
+                  size: ${labelBaseCm}cm ${labelAltoCm}cm;
+                  margin: 0.2cm;
+                }
+                .no-print {
+                  display: none !important;
+                }
+              }
+            `}</style>
 
-              {/* Tag sticker detail page preview */}
-              <div className="border-4 border-dashed border-slate-300 p-4 bg-white text-slate-900 space-y-3 font-mono">
-                <div className="flex justify-between items-start border-b border-slate-900 pb-1.5 leading-none">
-                  <div>
-                    <span className="text-[10px] font-black uppercase leading-none block">INBOUND STICKER</span>
-                    <span className="text-[7px] text-slate-400 font-bold block mt-1">PRODUCT SKU: {product.sku}</span>
+            {/* SCREEN MODAL DIALOG */}
+            <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center z-50 p-4 font-sans select-none animate-fade-in no-print overflow-y-auto">
+              <div className="bg-white rounded-3xl border border-slate-150 shadow-2xl max-w-4xl w-full p-6 space-y-5 animate-scale-up text-left my-6">
+                
+                {/* Header */}
+                <div className="border-b border-slate-150 pb-3 flex justify-between items-center text-slate-700">
+                  <div className="flex items-center gap-2.5">
+                    <div className="h-9 w-9 rounded-xl bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600">
+                      <Printer className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-black text-slate-800 uppercase tracking-tight flex items-center gap-2">
+                        <span>Configuración de Etiquetas en Centímetros (cm)</span>
+                        <span className="font-mono bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded text-xs">
+                          {product.sku}
+                        </span>
+                      </h3>
+                      <p className="text-[10px] text-slate-400 mt-0.5">
+                        Defina libremente las medidas de Base (ancho) y Alto en cm para imprimir en impresoras térmicas (Zebra, Brother, Dymo) o pliegos estándar.
+                      </p>
+                    </div>
                   </div>
-                  <span className="text-[8px] font-black border border-slate-900 px-1 py-0.5 rounded uppercase">
-                    WMS PASS
-                  </span>
+                  <button 
+                    onClick={() => setPrintSku(null)} 
+                    className="text-slate-400 hover:text-slate-600 font-extrabold h-8 w-8 rounded-lg hover:bg-slate-50 flex items-center justify-center transition cursor-pointer"
+                  >
+                    ✕
+                  </button>
                 </div>
 
-                <div className="text-center space-y-1">
-                  <span className="text-[7px] text-slate-400 font-bold block uppercase tracking-wide">DESCRIPCIÓN DE MATERIAL</span>
-                  <span className="text-xs font-black truncate block text-slate-800 leading-none">{product.name}</span>
-                  <span className="text-base font-black px-1.5 bg-slate-50 block py-1 border border-slate-200 rounded tracking-widest mt-1">
-                    {product.barcode || '7501020304012'}
-                  </span>
+                {/* 2-Columns Content: Controls & Preview */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                  
+                  {/* Left Column: Dimensions in Centimeters and Settings */}
+                  <div className="lg:col-span-6 space-y-4 text-xs">
+                    
+                    {/* Dimension Presets in cm */}
+                    <div className="space-y-1.5">
+                      <label className="block text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                        Formatos Estándar en Centímetros (Presets Rápidos)
+                      </label>
+                      <div className="grid grid-cols-3 gap-1.5">
+                        {presets.map((p) => {
+                          const isActive = labelSizePreset === p.id;
+                          return (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onClick={() => handleApplyPreset(p)}
+                              className={`p-2 rounded-xl border text-left transition cursor-pointer flex flex-col justify-between ${
+                                isActive
+                                  ? 'bg-blue-50 border-blue-500 text-blue-700 shadow-2xs'
+                                  : 'bg-slate-50 border-slate-200 hover:bg-slate-100/70 text-slate-600'
+                              }`}
+                            >
+                              <span className="font-bold text-[11px] font-mono leading-none block">{p.name}</span>
+                              <span className="text-[9px] text-slate-400 mt-1 block truncate leading-none">{p.desc}</span>
+                            </button>
+                          );
+                        })}
+                        <button
+                          type="button"
+                          onClick={() => setLabelSizePreset('custom')}
+                          className={`p-2 rounded-xl border text-left transition cursor-pointer flex flex-col justify-between ${
+                            labelSizePreset === 'custom'
+                              ? 'bg-blue-50 border-blue-500 text-blue-700 shadow-2xs'
+                              : 'bg-slate-50 border-slate-200 hover:bg-slate-100/70 text-slate-600'
+                          }`}
+                        >
+                          <span className="font-bold text-[11px] font-mono leading-none block">Personalizado</span>
+                          <span className="text-[9px] text-slate-400 mt-1 block truncate leading-none">Medida libre (cm)</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Centimeter Inputs (Base y Alto) */}
+                    <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] uppercase font-bold text-slate-600 tracking-wider flex items-center gap-1.5">
+                          <Ruler className="h-3.5 w-3.5 text-blue-600" />
+                          Seleccionar Medidas Exactas (en cm)
+                        </span>
+                        <span className="text-[10px] font-mono font-bold text-blue-600 bg-blue-100/60 px-2 py-0.5 rounded-full">
+                          {labelBaseCm} × {labelAltoCm} cm
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        {/* Base (cm) */}
+                        <div>
+                          <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1 tracking-wider">
+                            Base / Ancho (cm)
+                          </label>
+                          <div className="relative">
+                            <input
+                              type="number"
+                              min="2"
+                              max="40"
+                              step="0.5"
+                              value={labelBaseCm}
+                              onChange={(e) => {
+                                const val = Number(e.target.value);
+                                setLabelBaseCm(isNaN(val) || val <= 0 ? 1 : val);
+                                setLabelSizePreset('custom');
+                              }}
+                              className="w-full font-mono font-bold text-slate-800 bg-white border border-slate-200 py-2 pl-3 pr-10 rounded-xl focus:border-blue-500 focus:outline-none"
+                            />
+                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 pointer-events-none">
+                              cm
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Alto (cm) */}
+                        <div>
+                          <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1 tracking-wider">
+                            Alto / Altura (cm)
+                          </label>
+                          <div className="relative">
+                            <input
+                              type="number"
+                              min="2"
+                              max="40"
+                              step="0.5"
+                              value={labelAltoCm}
+                              onChange={(e) => {
+                                const val = Number(e.target.value);
+                                setLabelAltoCm(isNaN(val) || val <= 0 ? 1 : val);
+                                setLabelSizePreset('custom');
+                              }}
+                              className="w-full font-mono font-bold text-slate-800 bg-white border border-slate-200 py-2 pl-3 pr-10 rounded-xl focus:border-blue-500 focus:outline-none"
+                            />
+                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 pointer-events-none">
+                              cm
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Dimension metrics */}
+                      <div className="text-[10px] text-slate-400 font-mono flex items-center justify-between border-t border-slate-200/60 pt-2">
+                        <span>Área: {(labelBaseCm * labelAltoCm).toFixed(1)} cm²</span>
+                        <span>Proporción: {(labelBaseCm / (labelAltoCm || 1)).toFixed(2)} : 1</span>
+                      </div>
+                    </div>
+
+                    {/* Copias y Lote */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1 tracking-wider">
+                          Número de Copias
+                        </label>
+                        <input
+                          type="number"
+                          min="1"
+                          max="100"
+                          value={printCopies}
+                          onChange={(e) => setPrintCopies(Math.max(1, Math.min(100, Number(e.target.value))))}
+                          className="w-full font-mono font-bold text-slate-800 bg-slate-50 border border-slate-200 py-2 px-3 rounded-xl focus:border-blue-500 focus:outline-none text-center"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1 tracking-wider">
+                          Lote / Batch
+                        </label>
+                        <input
+                          type="text"
+                          value={labelLotNumber}
+                          onChange={(e) => setLabelLotNumber(e.target.value)}
+                          className="w-full font-mono font-semibold text-slate-700 bg-slate-50 border border-slate-200 py-2 px-3 rounded-xl focus:border-blue-500 focus:outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Opciones de Contenido */}
+                    <div className="space-y-2 border-t border-slate-150 pt-3">
+                      <span className="block text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                        Contenido visible en la etiqueta
+                      </span>
+                      <div className="grid grid-cols-2 gap-2 text-[11px]">
+                        <label className="flex items-center gap-2 cursor-pointer text-slate-700 font-medium">
+                          <input
+                            type="checkbox"
+                            checked={includeLabelImage}
+                            onChange={(e) => setIncludeLabelImage(e.target.checked)}
+                            className="rounded text-blue-600 focus:ring-blue-500"
+                          />
+                          <span>Foto del SKU {product.imageUrl ? '(Disponible)' : '(Sin foto)'}</span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer text-slate-700 font-medium">
+                          <input
+                            type="checkbox"
+                            checked={includeLabelBarcode}
+                            onChange={(e) => setIncludeLabelBarcode(e.target.checked)}
+                            className="rounded text-blue-600 focus:ring-blue-500"
+                          />
+                          <span>Código de barras</span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer text-slate-700 font-medium">
+                          <input
+                            type="checkbox"
+                            checked={includeLabelDetails}
+                            onChange={(e) => setIncludeLabelDetails(e.target.checked)}
+                            className="rounded text-blue-600 focus:ring-blue-500"
+                          />
+                          <span>Peso y Categoría</span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer text-slate-700 font-medium">
+                          <input
+                            type="checkbox"
+                            checked={includeLabelLot}
+                            onChange={(e) => setIncludeLabelLot(e.target.checked)}
+                            className="rounded text-blue-600 focus:ring-blue-500"
+                          />
+                          <span>Referencia de Lote</span>
+                        </label>
+                      </div>
+                    </div>
+
+                  </div>
+
+                  {/* Right Column: Proportional Live Preview */}
+                  <div className="lg:col-span-6 flex flex-col justify-between space-y-4">
+                    
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                          Vista Previa a Escala Proporcional
+                        </span>
+                        <span className="text-[10px] font-mono font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
+                          ↔ {labelBaseCm} cm × ↕ {labelAltoCm} cm
+                        </span>
+                      </div>
+
+                      {/* Visual Container with Ruler Dimensions */}
+                      <div className="bg-slate-100/70 border border-slate-200 rounded-2xl p-4 flex flex-col items-center justify-center min-h-[300px] relative overflow-hidden">
+                        
+                        {/* Top Ruler (Base cm) */}
+                        <div className="flex items-center justify-center gap-1.5 text-[9px] font-mono font-bold text-slate-500 mb-2 w-full max-w-[340px]">
+                          <span className="h-[1px] bg-slate-300 flex-1"></span>
+                          <span>↔ Base: {labelBaseCm} cm</span>
+                          <span className="h-[1px] bg-slate-300 flex-1"></span>
+                        </div>
+
+                        {/* Middle Area: Left Ruler + Label */}
+                        <div className="flex items-center justify-center gap-2 w-full">
+                          {/* Left Ruler (Alto cm) */}
+                          <div className="flex flex-col items-center justify-center text-[9px] font-mono font-bold text-slate-500 shrink-0">
+                            <span className="w-[1px] h-10 bg-slate-300"></span>
+                            <span className="writing-mode-vertical rotate-180 py-1" style={{ writingMode: 'vertical-rl' }}>
+                              ↕ {labelAltoCm} cm
+                            </span>
+                            <span className="w-[1px] h-10 bg-slate-300"></span>
+                          </div>
+
+                          {/* The Rendered Label Preview */}
+                          <div 
+                            style={{ 
+                              aspectRatio: `${labelBaseCm} / ${labelAltoCm}`,
+                              maxWidth: '100%',
+                              width: labelBaseCm >= labelAltoCm ? '320px' : `${Math.round(280 * (labelBaseCm / labelAltoCm))}px`,
+                              maxHeight: '320px'
+                            }}
+                            className="bg-white border-2 border-slate-800 shadow-md p-3.5 rounded-lg text-slate-900 font-mono flex flex-col justify-between overflow-hidden relative"
+                          >
+                            {/* Header */}
+                            <div className="flex justify-between items-start border-b border-slate-800 pb-1 leading-none shrink-0">
+                              <div>
+                                <span className="text-[9px] font-black uppercase tracking-wider block">LOGÍSTICA INBOUND</span>
+                                <span className="text-[7px] text-slate-500 font-bold block mt-0.5">SKU: {product.sku}</span>
+                              </div>
+                              <span className="text-[7.5px] font-black border border-slate-800 px-1 py-0.5 rounded uppercase">
+                                WMS PASS
+                              </span>
+                            </div>
+
+                            {/* Body: Product Info and optional photo */}
+                            <div className="flex items-center gap-2 my-auto py-1">
+                              {includeLabelImage && product.imageUrl && (
+                                <img
+                                  src={product.imageUrl}
+                                  alt={product.name}
+                                  className="h-10 w-10 object-cover rounded border border-slate-300 shrink-0 bg-white"
+                                  onError={(e) => {
+                                    (e.target as HTMLImageElement).style.display = 'none';
+                                  }}
+                                />
+                              )}
+                              <div className="min-w-0 flex-1">
+                                <span className="text-[6.5px] text-slate-400 font-bold uppercase block">MATERIAL</span>
+                                <h4 className="text-[11px] font-black text-slate-900 truncate leading-tight">
+                                  {product.name}
+                                </h4>
+                                <span className="text-[10px] font-bold tracking-widest text-slate-800 block mt-0.5">
+                                  {product.barcode || '7501020304012'}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Details (Category, Weight, Lot) */}
+                            {includeLabelDetails && (
+                              <div className="grid grid-cols-2 gap-1 text-[7.5px] border-t border-b border-slate-800 py-1 leading-tight shrink-0">
+                                <div className="truncate">
+                                  <span className="text-slate-400 block text-[6px]">CATEGORÍA:</span>
+                                  <span className="font-bold truncate block">{product.category}</span>
+                                </div>
+                                <div>
+                                  <span className="text-slate-400 block text-[6px]">PESO:</span>
+                                  <span className="font-bold block">{product.unitWeight} kg</span>
+                                </div>
+                              </div>
+                            )}
+
+                            {includeLabelLot && (
+                              <div className="flex justify-between items-center text-[7px] pt-0.5 shrink-0 text-slate-600">
+                                <span>LOTE: <strong>{labelLotNumber}</strong></span>
+                                <span>MEDIDAS: <strong>{labelBaseCm}×{labelAltoCm}cm</strong></span>
+                              </div>
+                            )}
+
+                            {/* Barcode lines */}
+                            {includeLabelBarcode && (
+                              <div className="text-center pt-1 shrink-0 flex flex-col items-center">
+                                <div className="w-full flex items-center justify-center gap-[1.5px] h-6 overflow-hidden py-0.5 select-none">
+                                  {[2, 1, 3, 1, 2, 4, 1, 2, 1, 3, 2, 1, 4, 1, 2, 1, 3, 1, 2, 1, 4, 2, 1, 3, 1, 2].map((w, idx) => (
+                                    <div
+                                      key={idx}
+                                      className="bg-slate-900 h-full shrink-0"
+                                      style={{ width: `${w * 1.2}px` }}
+                                    />
+                                  ))}
+                                </div>
+                                <span className="text-[7.5px] tracking-[4px] font-bold block mt-0.5 pl-1">
+                                  *{product.barcode || product.sku}*
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                      </div>
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex gap-2.5 pt-2 border-t border-slate-150">
+                      <button
+                        type="button"
+                        onClick={handlePrint}
+                        className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-2xl text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-sm hover:shadow transition cursor-pointer active:scale-95"
+                      >
+                        <Printer className="h-4 w-4" />
+                        <span>Mandar a Imprimir ({printCopies} {printCopies === 1 ? 'copia' : 'copias'})</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPrintSku(null)}
+                        className="px-5 py-3 rounded-2xl text-xs font-bold text-slate-600 hover:bg-slate-100 border border-slate-200 transition cursor-pointer"
+                      >
+                        Cerrar
+                      </button>
+                    </div>
+
+                  </div>
+
                 </div>
 
-                <div className="text-[9px] grid grid-cols-2 gap-1.5 border-t border-b border-slate-900 py-1.5 font-mono leading-relaxed">
-                  <div>
-                    <span className="text-slate-400 block text-[6px] font-bold">CATEGORÍA</span>
-                    <strong className="block truncate">{product.category}</strong>
-                  </div>
-                  <div>
-                    <span className="text-slate-400 block text-[6px] font-bold">PESO UNIT.</span>
-                    <strong className="block">{product.unitWeight} kg</strong>
-                  </div>
-                </div>
-
-                <div className="text-center flex flex-col items-center">
-                  <div className="text-slate-850 leading-none space-y-0.5 font-sans scale-y-150 py-1">
-                    |||||||||||||||||||||||||||||||||||||||||||||||||
-                  </div>
-                  <span className="text-[9px] tracking-[6px] font-bold text-center block mt-1.5 pl-1.5">
-                    *{product.barcode}*
-                  </span>
-                </div>
-              </div>
-
-              {/* Config copies */}
-              <div className="space-y-1.5 text-xs">
-                <label className="block text-[10px] uppercase font-bold text-slate-400 tracking-wider">Número de Copias a Generar</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="50"
-                  value={printCopies}
-                  onChange={(e) => setPrintCopies(Number(e.target.value))}
-                  className="w-full font-mono font-bold text-slate-700 bg-slate-50 border border-slate-200 p-2.5 rounded-xl text-center focus:border-blue-500"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-2 pt-1">
-                <button
-                  onClick={() => {
-                    window.print();
-                    setPrintSku(null);
-                  }}
-                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-xl text-xs uppercase tracking-wider flex items-center justify-center gap-1 cursor-pointer"
-                >
-                  <Printer className="h-3.5 w-3.5" />
-                  Imprimir ({printCopies})
-                </button>
-                <button
-                  onClick={() => setPrintSku(null)}
-                  className="bg-slate-150 text-slate-605 font-bold py-2.5 rounded-xl text-xs uppercase tracking-wider block text-center"
-                >
-                  Cancelar
-                </button>
               </div>
             </div>
-          </div>
+
+            {/* PRINT-ONLY AREA: EXACT CENTIMETER LABELS */}
+            <div id="printable-sku-label-station" className="hidden print:block">
+              {Array.from({ length: printCopies }).map((_, copyIndex) => (
+                <div
+                  key={copyIndex}
+                  style={{
+                    width: `${labelBaseCm}cm`,
+                    height: `${labelAltoCm}cm`,
+                    boxSizing: 'border-box',
+                    pageBreakAfter: 'always',
+                    breakAfter: 'page',
+                    pageBreakInside: 'avoid',
+                    breakInside: 'avoid',
+                    margin: '0.2cm auto',
+                    border: '1.5px solid #000',
+                    padding: '0.3cm',
+                    backgroundColor: '#fff',
+                    color: '#000',
+                    fontFamily: 'monospace',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'space-between',
+                    overflow: 'hidden'
+                  }}
+                >
+                  {/* Label Header */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1px solid #000', paddingBottom: '2px', lineHeight: 1 }}>
+                    <div>
+                      <span style={{ fontSize: '9px', fontWeight: 900, textTransform: 'uppercase', display: 'block' }}>LOGÍSTICA INBOUND</span>
+                      <span style={{ fontSize: '7.5px', color: '#555', fontWeight: 700, display: 'block', marginTop: '1px' }}>SKU: {product.sku}</span>
+                    </div>
+                    <span style={{ fontSize: '8px', fontWeight: 900, border: '1px solid #000', padding: '1px 3px', borderRadius: '2px', textTransform: 'uppercase' }}>
+                      WMS PASS
+                    </span>
+                  </div>
+
+                  {/* Product Info & Photo */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: 'auto 0', padding: '2px 0' }}>
+                    {includeLabelImage && product.imageUrl && (
+                      <img
+                        src={product.imageUrl}
+                        alt={product.name}
+                        style={{ height: '36px', width: '36px', objectFit: 'cover', borderRadius: '4px', border: '1px solid #999', flexShrink: 0 }}
+                      />
+                    )}
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <span style={{ fontSize: '7px', color: '#666', fontWeight: 700, textTransform: 'uppercase', display: 'block' }}>MATERIAL</span>
+                      <div style={{ fontSize: '11px', fontWeight: 900, color: '#000', lineHeight: 1.1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {product.name}
+                      </div>
+                      <span style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '2px', color: '#000', display: 'block', marginTop: '2px' }}>
+                        {product.barcode || '7501020304012'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Details (Category & Weight) */}
+                  {includeLabelDetails && (
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px', fontSize: '8px', borderTop: '1px solid #000', borderBottom: '1px solid #000', padding: '3px 0', lineHeight: 1.2 }}>
+                      <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        <span style={{ color: '#666', display: 'block', fontSize: '6.5px' }}>CATEGORÍA:</span>
+                        <strong style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis' }}>{product.category}</strong>
+                      </div>
+                      <div>
+                        <span style={{ color: '#666', display: 'block', fontSize: '6.5px' }}>PESO UNIT.:</span>
+                        <strong>{product.unitWeight} kg</strong>
+                      </div>
+                    </div>
+                  )}
+
+                  {includeLabelLot && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '7px', paddingTop: '2px', color: '#333' }}>
+                      <span>LOTE: <strong>{labelLotNumber}</strong></span>
+                      <span>MEDIDAS: <strong>{labelBaseCm} × {labelAltoCm} cm</strong></span>
+                    </div>
+                  )}
+
+                  {/* Barcode representation */}
+                  {includeLabelBarcode && (
+                    <div style={{ textAlign: 'center', paddingTop: '3px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                      <div style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '1.5px', height: '26px', overflow: 'hidden' }}>
+                        {[2, 1, 3, 1, 2, 4, 1, 2, 1, 3, 2, 1, 4, 1, 2, 1, 3, 1, 2, 1, 4, 2, 1, 3, 1, 2].map((w, idx) => (
+                          <div
+                            key={idx}
+                            style={{ backgroundColor: '#000', height: '100%', width: `${w * 1.4}px`, flexShrink: 0 }}
+                          />
+                        ))}
+                      </div>
+                      <span style={{ fontSize: '8px', letterSpacing: '4px', fontWeight: 700, display: 'block', marginTop: '2px', paddingLeft: '4px' }}>
+                        *{product.barcode || product.sku}*
+                      </span>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </>
         );
       })()}
 
@@ -3629,7 +3807,7 @@ export const InventoryManager: React.FC<InventoryProps> = ({
                               ) : isLowStock ? (
                                 <span className="text-amber-600 text-[8.5px] bg-amber-50 border border-amber-200/50 px-1.5 py-0.5 rounded-md font-mono tracking-wider">BAJO</span>
                               ) : (
-                                <span className="text-emerald-650 text-[8.5px] bg-emerald-50 border border-emerald-200/50 px-1.5 py-0.5 rounded-md font-mono tracking-wider">OK</span>
+                                <span className="text-emerald-700 text-[8.5px] bg-emerald-50 border border-emerald-200/50 px-1.5 py-0.5 rounded-md font-mono tracking-wider">OK</span>
                               )}
                             </td>
                           </tr>
@@ -3730,9 +3908,82 @@ export const InventoryManager: React.FC<InventoryProps> = ({
                 </div>
               </div>
 
+              {/* Local File Upload Zone */}
+              <div className="space-y-1.5">
+                <label className="block text-[10px] uppercase font-bold text-slate-500 tracking-wider flex items-center gap-1.5">
+                  <FolderUp className="h-3.5 w-3.5 text-indigo-600" />
+                  Subir Fotografía Directamente desde tu Equipo
+                </label>
+                <input
+                  type="file"
+                  ref={modalFileInputRef}
+                  accept="image/*"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      try {
+                        setIsUploadingModalImage(true);
+                        const dataUrl = await processUploadedImageFile(file);
+                        await handleSelectUrl(dataUrl);
+                      } catch (err: any) {
+                        alert(err?.message || 'Error al procesar la imagen.');
+                      } finally {
+                        setIsUploadingModalImage(false);
+                      }
+                    }
+                  }}
+                />
+                <div
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setIsDraggingModalImage(true);
+                  }}
+                  onDragLeave={() => setIsDraggingModalImage(false)}
+                  onDrop={async (e) => {
+                    e.preventDefault();
+                    setIsDraggingModalImage(false);
+                    const file = e.dataTransfer.files?.[0];
+                    if (file && file.type.startsWith('image/')) {
+                      try {
+                        setIsUploadingModalImage(true);
+                        const dataUrl = await processUploadedImageFile(file);
+                        await handleSelectUrl(dataUrl);
+                      } catch (err: any) {
+                        alert(err?.message || 'Error al procesar la imagen.');
+                      } finally {
+                        setIsUploadingModalImage(false);
+                      }
+                    }
+                  }}
+                  onClick={() => modalFileInputRef.current?.click()}
+                  className={`border-2 border-dashed rounded-2xl p-4 text-center transition cursor-pointer flex items-center justify-center gap-3.5 ${
+                    isDraggingModalImage
+                      ? 'border-indigo-500 bg-indigo-50/80 scale-[1.01]'
+                      : 'border-indigo-200 bg-indigo-50/40 hover:bg-indigo-50/70 hover:border-indigo-400'
+                  }`}
+                >
+                  <div className="h-10 w-10 rounded-xl bg-white shadow-xs border border-indigo-100 flex items-center justify-center text-indigo-600 shrink-0">
+                    {isUploadingModalImage ? (
+                      <span className="animate-spin text-sm">⏳</span>
+                    ) : (
+                      <Upload className="h-5 w-5" />
+                    )}
+                  </div>
+                  <div className="text-left">
+                    <span className="text-xs font-bold text-slate-800 block">
+                      {isUploadingModalImage ? 'Guardando imagen del equipo...' : 'Arrastra una foto aquí o haz clic para explorar en tu equipo'}
+                    </span>
+                    <span className="text-[10px] text-slate-500 block mt-0.5">
+                      Soporta JPG, PNG, WebP o GIF (Optimización y compresión integrada para almacenamiento rápido)
+                    </span>
+                  </div>
+                </div>
+              </div>
+
               {/* Grid of logistics placeholder images */}
               <div className="space-y-2.5">
-                <label className="block text-[10px] uppercase font-bold text-slate-400 tracking-wider">Seleccione una ilustración de categoría de logística estándar</label>
+                <label className="block text-[10px] uppercase font-bold text-slate-400 tracking-wider">O seleccione una ilustración de categoría de logística estándar</label>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[300px] overflow-y-auto pr-1">
                   {LOGISTICS_PLACEHOLDERS.map((placeholder) => {
                     const isMatchedCategory = product.category?.toLowerCase() === placeholder.category?.toLowerCase();
@@ -3830,6 +4081,408 @@ export const InventoryManager: React.FC<InventoryProps> = ({
           </div>
         );
       })()}
+
+      {/* EDIT SKU MODAL WITH LOCAL FILE UPLOAD */}
+      {editingSkuItem && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 font-sans select-none animate-fade-in no-print overflow-y-auto">
+          <div className="bg-white rounded-2xl border border-slate-150 shadow-2xl max-w-3xl w-full p-6 space-y-5 animate-scale-up text-left my-8">
+            
+            {/* Header */}
+            <div className="border-b border-slate-150 pb-3 flex justify-between items-center text-slate-700">
+              <div className="flex items-center gap-2.5">
+                <div className="h-9 w-9 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600">
+                  <Pencil className="h-4.5 w-4.5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-slate-800 uppercase tracking-tight flex items-center gap-2">
+                    <span>Editar SKU de Inventario</span>
+                    <span className="font-mono bg-slate-150 text-slate-700 px-2 py-0.5 rounded text-xs">
+                      {editingSkuItem.sku}
+                    </span>
+                  </h3>
+                  <p className="text-[10px] text-slate-400 mt-0.5">
+                    Modifique las propiedades de stock, descripción, parámetros de embalaje y fotografía desde su equipo.
+                  </p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setEditingSkuItem(null)} 
+                className="text-slate-400 hover:text-slate-600 font-extrabold h-8 w-8 rounded-lg hover:bg-slate-50 flex items-center justify-center transition cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Form */}
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                if (!editingSkuItem) return;
+                try {
+                  if (onUpdateInventoryItem) {
+                    await onUpdateInventoryItem(editingSkuItem.sku, {
+                      name: editFormFields.name?.trim(),
+                      category: editFormFields.category,
+                      description: editFormFields.description?.trim(),
+                      minQty: Number(editFormFields.minQty) || 10,
+                      cost: Number(editFormFields.cost) || 0,
+                      supplier: editFormFields.supplier?.trim(),
+                      expirationDate: editFormFields.expirationDate,
+                      unitWidth: Number(editFormFields.unitWidth) || 30,
+                      unitHeight: Number(editFormFields.unitHeight) || 20,
+                      unitLength: Number(editFormFields.unitLength) || 20,
+                      unitWeight: Number(editFormFields.unitWeight) || 1.0,
+                      barcode: editFormFields.barcode?.trim(),
+                      imageUrl: editFormFields.imageUrl?.trim()
+                    });
+                  }
+                  setEditingSkuItem(null);
+                } catch (err) {
+                  console.error(err);
+                }
+              }}
+              className="space-y-4"
+            >
+              <div className="grid grid-cols-12 gap-3.5 max-h-[68vh] overflow-y-auto pr-1">
+                {/* Nombre */}
+                <div className="col-span-12 md:col-span-8">
+                  <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1 tracking-wider">
+                    Nombre del Producto
+                  </label>
+                  <input
+                    type="text"
+                    value={editFormFields.name || ''}
+                    onChange={(e) => setEditFormFields(prev => ({ ...prev, name: e.target.value }))}
+                    className="w-full text-xs font-bold rounded-lg border border-slate-200 bg-white p-2.5 text-slate-700 focus:border-indigo-500 focus:outline-none transition hover:border-slate-300"
+                    required
+                  />
+                </div>
+
+                {/* Categoría */}
+                <div className="col-span-12 md:col-span-4">
+                  <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1 tracking-wider">
+                    Categoría
+                  </label>
+                  <select
+                    value={editFormFields.category || ''}
+                    onChange={(e) => setEditFormFields(prev => ({ ...prev, category: e.target.value }))}
+                    className="w-full text-xs font-semibold rounded-lg border border-slate-200 bg-white p-2.5 text-slate-700 focus:border-indigo-500 focus:outline-none transition hover:border-slate-300"
+                  >
+                    {securityCategories.map(cat => (
+                      <option key={cat} value={cat}>{cat}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Descripción */}
+                <div className="col-span-12">
+                  <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1 tracking-wider">
+                    Descripción
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={editFormFields.description || ''}
+                    onChange={(e) => setEditFormFields(prev => ({ ...prev, description: e.target.value }))}
+                    className="w-full text-xs font-semibold rounded-lg border border-slate-200 bg-white p-2.5 text-slate-700 focus:border-indigo-500 focus:outline-none resize-none transition hover:border-slate-300"
+                  />
+                </div>
+
+                {/* Fila: Stock Mínimo, Costo, Proveedor, Código de Barras */}
+                <div className="col-span-6 md:col-span-3">
+                  <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1 tracking-wider">
+                    Stock Mínimo (Alerta)
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={editFormFields.minQty ?? 10}
+                    onChange={(e) => setEditFormFields(prev => ({ ...prev, minQty: Number(e.target.value) }))}
+                    className="w-full text-xs font-bold font-mono rounded-lg border border-slate-200 bg-white p-2.5 text-slate-700 focus:border-indigo-500 focus:outline-none transition hover:border-slate-300"
+                  />
+                </div>
+
+                <div className="col-span-6 md:col-span-3">
+                  <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1 tracking-wider">
+                    Costo Unitario ($)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={editFormFields.cost ?? 0}
+                    onChange={(e) => setEditFormFields(prev => ({ ...prev, cost: Number(e.target.value) }))}
+                    className="w-full text-xs font-bold font-mono rounded-lg border border-slate-200 bg-white p-2.5 text-slate-700 focus:border-indigo-500 focus:outline-none transition hover:border-slate-300"
+                  />
+                </div>
+
+                <div className="col-span-6 md:col-span-3">
+                  <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1 tracking-wider">
+                    Proveedor
+                  </label>
+                  <input
+                    type="text"
+                    value={editFormFields.supplier || ''}
+                    onChange={(e) => setEditFormFields(prev => ({ ...prev, supplier: e.target.value }))}
+                    className="w-full text-xs font-semibold rounded-lg border border-slate-200 bg-white p-2.5 text-slate-700 focus:border-indigo-500 focus:outline-none transition hover:border-slate-300"
+                  />
+                </div>
+
+                <div className="col-span-6 md:col-span-3">
+                  <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1 tracking-wider">
+                    Código de Barras
+                  </label>
+                  <input
+                    type="text"
+                    value={editFormFields.barcode || ''}
+                    onChange={(e) => setEditFormFields(prev => ({ ...prev, barcode: e.target.value }))}
+                    className="w-full text-xs font-mono rounded-lg border border-slate-200 bg-white p-2.5 text-slate-700 focus:border-indigo-500 focus:outline-none transition hover:border-slate-300"
+                  />
+                </div>
+
+                {/* Dimensiones y Peso */}
+                <div className="col-span-12 grid grid-cols-4 gap-2 bg-slate-50 p-2.5 rounded-xl border border-slate-150">
+                  <div>
+                    <label className="block text-[9px] uppercase font-bold text-slate-400 mb-0.5">Ancho (cm)</label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={editFormFields.unitWidth ?? 30}
+                      onChange={(e) => setEditFormFields(prev => ({ ...prev, unitWidth: Number(e.target.value) }))}
+                      className="w-full text-xs font-mono font-semibold rounded-lg border border-slate-200 bg-white p-1.5 text-slate-700"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] uppercase font-bold text-slate-400 mb-0.5">Alto (cm)</label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={editFormFields.unitHeight ?? 20}
+                      onChange={(e) => setEditFormFields(prev => ({ ...prev, unitHeight: Number(e.target.value) }))}
+                      className="w-full text-xs font-mono font-semibold rounded-lg border border-slate-200 bg-white p-1.5 text-slate-700"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] uppercase font-bold text-slate-400 mb-0.5">Largo (cm)</label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={editFormFields.unitLength ?? 20}
+                      onChange={(e) => setEditFormFields(prev => ({ ...prev, unitLength: Number(e.target.value) }))}
+                      className="w-full text-xs font-mono font-semibold rounded-lg border border-slate-200 bg-white p-1.5 text-slate-700"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] uppercase font-bold text-slate-400 mb-0.5">Peso (kg)</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0.1"
+                      value={editFormFields.unitWeight ?? 1.0}
+                      onChange={(e) => setEditFormFields(prev => ({ ...prev, unitWeight: Number(e.target.value) }))}
+                      className="w-full text-xs font-mono font-semibold rounded-lg border border-slate-200 bg-white p-1.5 text-slate-700"
+                    />
+                  </div>
+                </div>
+
+                {/* SECCIÓN DE SUBIDA DE IMAGEN EN EDICIÓN */}
+                <div className="col-span-12 border-t border-slate-150 pt-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="block text-[10px] uppercase font-bold text-slate-500 tracking-wider flex items-center gap-1.5">
+                      <Camera className="h-3.5 w-3.5 text-indigo-500" />
+                      Fotografía / Imagen del SKU
+                    </label>
+                    <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg text-[9px] font-bold">
+                      <button
+                        type="button"
+                        onClick={() => setEditImageInputMode('upload')}
+                        className={`px-2 py-0.5 rounded-md transition flex items-center gap-1 cursor-pointer ${
+                          editImageInputMode === 'upload'
+                            ? 'bg-white text-indigo-700 shadow-2xs'
+                            : 'text-slate-500 hover:text-slate-800'
+                        }`}
+                      >
+                        <FolderUp className="h-3 w-3" />
+                        <span>Subir del Equipo</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditImageInputMode('url')}
+                        className={`px-2 py-0.5 rounded-md transition flex items-center gap-1 cursor-pointer ${
+                          editImageInputMode === 'url'
+                            ? 'bg-white text-indigo-700 shadow-2xs'
+                            : 'text-slate-500 hover:text-slate-800'
+                        }`}
+                      >
+                        <span>URL Externa</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Hidden File Input for Edit */}
+                  <input
+                    type="file"
+                    ref={editFileInputRef}
+                    accept="image/*"
+                    className="hidden"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        try {
+                          setIsUploadingEditImage(true);
+                          setEditImageFileName(file.name);
+                          const dataUrl = await processUploadedImageFile(file);
+                          setEditFormFields(prev => ({ ...prev, imageUrl: dataUrl }));
+                        } catch (err: any) {
+                          alert(err?.message || 'Error al procesar la imagen.');
+                        } finally {
+                          setIsUploadingEditImage(false);
+                        }
+                      }
+                    }}
+                  />
+
+                  {editImageInputMode === 'upload' ? (
+                    <div
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        setIsDraggingEditImage(true);
+                      }}
+                      onDragLeave={() => setIsDraggingEditImage(false)}
+                      onDrop={async (e) => {
+                        e.preventDefault();
+                        setIsDraggingEditImage(false);
+                        const file = e.dataTransfer.files?.[0];
+                        if (file && file.type.startsWith('image/')) {
+                          try {
+                            setIsUploadingEditImage(true);
+                            setEditImageFileName(file.name);
+                            const dataUrl = await processUploadedImageFile(file);
+                            setEditFormFields(prev => ({ ...prev, imageUrl: dataUrl }));
+                          } catch (err: any) {
+                            alert(err?.message || 'Error al procesar la imagen.');
+                          } finally {
+                            setIsUploadingEditImage(false);
+                          }
+                        }
+                      }}
+                      onClick={() => editFileInputRef.current?.click()}
+                      className={`border-2 border-dashed rounded-xl p-3.5 text-center transition cursor-pointer flex items-center justify-center gap-3 ${
+                        isDraggingEditImage
+                          ? 'border-indigo-500 bg-indigo-50/70 scale-[1.01]'
+                          : 'border-slate-250 bg-slate-50 hover:bg-slate-100/80 hover:border-indigo-300'
+                      }`}
+                    >
+                      <div className="h-9 w-9 rounded-full bg-white shadow-2xs border border-slate-200 flex items-center justify-center text-indigo-600 shrink-0">
+                        {isUploadingEditImage ? (
+                          <span className="animate-spin text-xs">⏳</span>
+                        ) : (
+                          <Upload className="h-4.5 w-4.5" />
+                        )}
+                      </div>
+                      <div className="text-left">
+                        <span className="text-xs font-bold text-slate-700 block">
+                          {isUploadingEditImage ? 'Procesando imagen...' : 'Haz clic para seleccionar o arrastra una nueva imagen'}
+                        </span>
+                        <span className="text-[10px] text-slate-400 block mt-0.5">
+                          Formatos compatibles: JPG, PNG, WebP o GIF (Optimización automática integrada)
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <input
+                        type="url"
+                        value={editFormFields.imageUrl || ''}
+                        onChange={(e) => {
+                          setEditFormFields(prev => ({ ...prev, imageUrl: e.target.value }));
+                          setEditImageFileName('');
+                        }}
+                        placeholder="https://images.unsplash.com/... o enlace web"
+                        className="w-full text-xs rounded-lg border border-slate-200 bg-white p-2.5 text-slate-700 focus:border-indigo-500 focus:outline-none font-mono transition hover:border-slate-300"
+                      />
+                    </div>
+                  )}
+
+                  {/* Thumbnail and controls */}
+                  <div className="flex items-center justify-between gap-3 bg-slate-50 border border-slate-150 p-2.5 rounded-xl shrink-0 mt-2.5">
+                    <div className="flex items-center gap-3 min-w-0">
+                      {editFormFields.imageUrl ? (
+                        <img
+                          src={editFormFields.imageUrl}
+                          alt="Vista previa"
+                          referrerPolicy="no-referrer"
+                          className="h-12 w-12 object-cover rounded-lg border border-slate-200 shrink-0 bg-white"
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?auto=format&fit=crop&w=150&h=150&q=80';
+                          }}
+                        />
+                      ) : (
+                        <div className="h-12 w-12 rounded-lg border border-dashed border-slate-300 bg-slate-100 flex items-center justify-center text-slate-400 shrink-0">
+                          <ImageIcon className="h-5 w-5" />
+                        </div>
+                      )}
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-[10px] font-bold text-slate-700 flex items-center gap-1">
+                          <span>Miniatura Actual</span>
+                          {editImageFileName && (
+                            <span className="text-[9px] font-mono bg-indigo-100 text-indigo-700 px-1 rounded truncate max-w-[140px]">
+                              {editImageFileName}
+                            </span>
+                          )}
+                        </span>
+                        <span className="text-[9px] font-mono text-slate-400 truncate max-w-[200px] md:max-w-[320px]">
+                          {editFormFields.imageUrl ? (editFormFields.imageUrl.startsWith('data:') ? 'Imagen local cargada (Base64)' : editFormFields.imageUrl) : 'Sin imagen cargada'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {editFormFields.imageUrl && (
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => editFileInputRef.current?.click()}
+                          className="text-[10px] text-indigo-600 hover:text-indigo-800 font-bold px-2 py-1 rounded bg-indigo-50 border border-indigo-200 transition cursor-pointer"
+                        >
+                          Cambiar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditFormFields(prev => ({ ...prev, imageUrl: '' }));
+                            setEditImageFileName('');
+                          }}
+                          className="text-[10px] text-rose-500 hover:text-rose-700 font-bold px-1.5 py-1 rounded hover:bg-rose-50 transition cursor-pointer"
+                        >
+                          ✕ Quitar
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex justify-end gap-2.5 pt-3 border-t border-slate-150">
+                <button
+                  type="button"
+                  onClick={() => setEditingSkuItem(null)}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 border border-slate-200 transition cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2 rounded-xl text-xs font-bold uppercase tracking-wider shadow-sm hover:shadow transition flex items-center gap-1.5 cursor-pointer active:scale-95"
+                >
+                  <Check className="h-4 w-4" />
+                  <span>Guardar Cambios</span>
+                </button>
+              </div>
+            </form>
+
+          </div>
+        </div>
+      )}
 
     </div>
   );

@@ -23,7 +23,9 @@ import {
   FileText,
   ArrowLeftRight,
   RefreshCw,
-  Briefcase
+  Briefcase,
+  Database,
+  ShieldCheck
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { Bin, InventoryItem, Order, ActivityLog, CycleCountSession } from '../types';
@@ -36,7 +38,7 @@ interface ReportsCenterProps {
   countedSessions?: CycleCountSession[];
 }
 
-type ActiveReportType = 'performance' | 'inventory' | 'audit_logs' | 'orders_flow';
+type ActiveReportType = 'performance' | 'inventory' | 'audit_logs' | 'orders_flow' | 'full_backup';
 
 function oklchToRgbOrHsl(oklchStr: string): string {
   const match = oklchStr.match(/oklch\(\s*([0-9.]+%?)\s+([0-9.]+)\s+([0-9.]+)(?:\s*\/\s*([0-9.]+%?))?\s*\)/i);
@@ -80,6 +82,7 @@ export default function ReportsCenter({
 }: ReportsCenterProps) {
   const [selectedReport, setSelectedReport] = useState<ActiveReportType>('performance');
   const [customNotes, setCustomNotes] = useState('');
+  const [backupSuccessMsg, setBackupSuccessMsg] = useState('');
 
   // Currency Converter States
   const [currencyMode, setCurrencyMode] = useState<'original' | 'mxn_to_usd'>('original');
@@ -364,6 +367,128 @@ export default function ReportsCenter({
     XLSX.writeFile(wb, `Reporte_Pedidos_WMS_${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
+  // Full Database Backup Export function (Multi-Sheet Excel)
+  const handleExportFullBackup = () => {
+    const wb = XLSX.utils.book_new();
+    const currentDate = new Date().toISOString().slice(0, 10);
+    const currentTime = new Date().toLocaleTimeString();
+
+    // 1. Sheet: Executive Summary / General Metadata
+    const summaryData = [
+      { 'Propiedad / Métrica': 'Sistema WMS', 'Valor / Detalle': 'O-WMS PRO Warehouse Management System' },
+      { 'Propiedad / Métrica': 'Tipo de Archivo', 'Valor / Detalle': 'Respaldo General Completo (Full System Backup)' },
+      { 'Propiedad / Métrica': 'Fecha de Emisión', 'Valor / Detalle': currentDate },
+      { 'Propiedad / Métrica': 'Hora de Generación', 'Valor / Detalle': currentTime },
+      { 'Propiedad / Métrica': 'Línea de Negocio', 'Valor / Detalle': selectedBusinessLineFilter === 'all' ? 'Todas las Líneas' : (businessLines.find(l => l.id === selectedBusinessLineFilter)?.name || selectedBusinessLineFilter) },
+      { 'Propiedad / Métrica': 'Modo de Divisa', 'Valor / Detalle': currencyMode === 'original' ? 'Moneda Original ($)' : `Convertido (1 USD = ${exchangeRate} MXN)` },
+      { 'Propiedad / Métrica': 'Capital Total en Stock', 'Valor / Detalle': `${getCurrencySymbol()}${totalInventoryValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
+      { 'Propiedad / Métrica': 'Total de Unidades Almacenadas', 'Valor / Detalle': totalUnits },
+      { 'Propiedad / Métrica': 'Total de SKUs Registrados', 'Valor / Detalle': filteredInventoryByLine.length },
+      { 'Propiedad / Métrica': 'SKUs con Stock Activo (>0)', 'Valor / Detalle': activeSKUsCount },
+      { 'Propiedad / Métrica': 'SKUs en Alerta de Stock Mínimo', 'Valor / Detalle': lowStockCount },
+      { 'Propiedad / Métrica': 'Celdas Físicas Totales', 'Valor / Detalle': totalBins },
+      { 'Propiedad / Métrica': 'Celdas Ocupadas', 'Valor / Detalle': occupiedBins },
+      { 'Propiedad / Métrica': 'Porcentaje de Ocupación', 'Valor / Detalle': `${occupancyRate}%` },
+      { 'Propiedad / Métrica': 'Total de Pedidos Registrados', 'Valor / Detalle': totalOrdersCount },
+      { 'Propiedad / Métrica': 'Pedidos Completados', 'Valor / Detalle': completedOrders },
+      { 'Propiedad / Métrica': 'Pedidos Pendientes', 'Valor / Detalle': pendingOrders },
+      { 'Propiedad / Métrica': 'Registros de Auditoría (Logs)', 'Valor / Detalle': filteredLogsByLine.length },
+      { 'Propiedad / Métrica': 'Sesiones de Conteo Cíclico', 'Valor / Detalle': countedSessions.length },
+      { 'Propiedad / Métrica': 'Comentarios / Notas', 'Valor / Detalle': customNotes || 'Respaldo de seguridad generado desde el Centro de Reportes WMS.' }
+    ];
+    const wsSummary = XLSX.utils.json_to_sheet(summaryData);
+    XLSX.utils.book_append_sheet(wb, wsSummary, 'Resumen_General');
+
+    // 2. Sheet: Full Inventory Catalog
+    const inventoryData = filteredInventoryByLine.map(item => ({
+      'SKU': item.sku,
+      'Nombre del Producto': item.name,
+      'Descripción': item.description,
+      'Categoría': item.category,
+      'Línea de Negocio': businessLines.find(l => l.id === getSkuBusinessLineId(item))?.name || 'Otro',
+      'Cantidad en Stock': item.qty,
+      'Stock Mínimo': item.minQty !== undefined && item.minQty > 0 ? item.minQty : globalThreshold,
+      'Estado Stock': item.qty <= (item.minQty !== undefined && item.minQty > 0 ? item.minQty : globalThreshold) ? 'BAJO (ALERTA)' : 'ÓPTIMO',
+      [`Costo Unitario (${getCurrencySymbol()})`]: Number(convertItemCost(item.cost || 0).toFixed(2)),
+      [`Valuación Total (${getCurrencySymbol()})`]: Number(((item.qty || 0) * convertItemCost(item.cost || 0)).toFixed(2)),
+      'Proveedor': item.supplier,
+      'Fecha Vencimiento': item.expirationDate || 'Sin caducidad',
+      'Código de Barras': item.barcode || item.sku,
+      'Peso Unitario (kg)': item.unitWeight || 0.5,
+      'Dimensiones (L x W x H cm)': `${item.unitLength || 0} x ${item.unitWidth || 0} x ${item.unitHeight || 0}`
+    }));
+    const wsInventory = XLSX.utils.json_to_sheet(inventoryData);
+    XLSX.utils.book_append_sheet(wb, wsInventory, 'Inventario');
+
+    // 3. Sheet: Warehouse Bins & Physical Layout
+    const binsData = filteredBinsByLine.map(bin => {
+      const occupiedItem = bin.occupiedSku ? inventory.find(i => i.sku === bin.occupiedSku) : null;
+      return {
+        'ID Celda': bin.id,
+        'Pasillo (Aisle)': bin.aisle,
+        'Rack': bin.rack,
+        'Estante (Shelf)': bin.shelf,
+        'Nivel (Level)': bin.level,
+        'Estado': bin.status === 'Empty' ? 'Vacío' : bin.status === 'Partial' ? 'Parcial' : 'Lleno',
+        'SKU Almacenado': bin.occupiedSku || '(Vacío)',
+        'Nombre Producto': occupiedItem ? occupiedItem.name : '',
+        'Cantidad en Celda': bin.occupiedQty,
+        'Peso Máximo (kg)': bin.maxWeight,
+        'Volumen Máximo (m3)': bin.maxVolume,
+        'Línea Asignada': businessLines.find(l => l.id === getBinDesignatedLineId(bin))?.name || 'General'
+      };
+    });
+    const wsBins = XLSX.utils.json_to_sheet(binsData);
+    XLSX.utils.book_append_sheet(wb, wsBins, 'Ubicaciones_Celdas');
+
+    // 4. Sheet: Orders and Shipments Flow
+    const ordersData = filteredOrdersByLine.map(order => ({
+      'ID Pedido': order.id,
+      'Tipo de Pedido': order.type === 'Inbound' ? 'Ingreso (Inbound)' : 'Despacho (Outbound)',
+      'Prioridad': order.priority,
+      'Estado': order.status,
+      'Fecha Registro': order.dateCreated,
+      'Responsable Asignado': order.assignedTo || 'No asignado',
+      'Transportista': order.carrier || 'No asignado',
+      'Número Rastreo': order.trackingNumber || '',
+      'Fecha Despacho': order.shipmentDate || '',
+      'Total Unidades': order.items.reduce((sum, i) => sum + i.qty, 0),
+      'Detalle Artículos': order.items.map(i => `${i.sku} (Cant: ${i.qty})`).join('; ')
+    }));
+    const wsOrders = XLSX.utils.json_to_sheet(ordersData);
+    XLSX.utils.book_append_sheet(wb, wsOrders, 'Pedidos_Transacciones');
+
+    // 5. Sheet: Audit Logs and Operational Traceability
+    const logsData = filteredLogsByLine.map(log => ({
+      'ID Log': log.id,
+      'Fecha y Hora': log.timestamp,
+      'Usuario / Operario': log.user,
+      'Acción Registrada': log.action,
+      'Detalle Operación': log.details
+    }));
+    const wsLogs = XLSX.utils.json_to_sheet(logsData);
+    XLSX.utils.book_append_sheet(wb, wsLogs, 'Historial_Auditoria');
+
+    // 6. Sheet: Cycle Count Sessions (if available)
+    if (countedSessions && countedSessions.length > 0) {
+      const cycleData = countedSessions.map(session => ({
+        'SKU': session.sku,
+        'Fecha Conteo': session.date,
+        'Conteo Físico': session.physical,
+        'Stock Sistema': session.system,
+        'Desviación': session.deviation,
+        'Diagnóstico': session.deviation === 0 ? 'Conforme (Exacto)' : session.deviation > 0 ? `Sobrante (+${session.deviation})` : `Faltante (${session.deviation})`
+      }));
+      const wsCycle = XLSX.utils.json_to_sheet(cycleData);
+      XLSX.utils.book_append_sheet(wb, wsCycle, 'Conteos_Ciclicos');
+    }
+
+    const fileName = `Respaldo_Completo_WMS_${currentDate}.xlsx`;
+    XLSX.writeFile(wb, fileName);
+    setBackupSuccessMsg(`Respaldo descargado exitosamente: "${fileName}" con todas las hojas operativas del WMS.`);
+    setTimeout(() => setBackupSuccessMsg(''), 6000);
+  };
+
 
 
   return (
@@ -376,13 +501,41 @@ export default function ReportsCenter({
             Consolidado y Descarga de Reportes
           </h2>
           <p className="text-xs text-slate-500 mt-1">
-            Herramienta centralizada para descargar hojas de cálculo de existencias, auditorías, rendimiento y flujo de pedidos en formato Excel (.xlsx).
+            Herramienta centralizada para descargar hojas de cálculo de existencias, auditorías, rendimiento, respaldos completos y flujo de pedidos en formato Excel (.xlsx).
           </p>
         </div>
-        <div className="text-[10px] font-mono text-slate-400 bg-slate-50 px-3 py-1.5 border border-slate-200 rounded-lg">
-          Operador: Administrador | Acceso General
+        <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            type="button"
+            onClick={handleExportFullBackup}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer active:scale-95"
+            title="Descargar una copia de seguridad integral en Excel (.xlsx) con todas las hojas del WMS"
+          >
+            <Database className="h-4 w-4" />
+            <span>Descargar Respaldo en Excel</span>
+          </button>
+          <div className="text-[10px] font-mono text-slate-400 bg-slate-50 px-3 py-2 border border-slate-200 rounded-xl">
+            Operador: Administrador | Acceso General
+          </div>
         </div>
       </div>
+
+      {/* Success Notification for Backup / Exports */}
+      {backupSuccessMsg && (
+        <div className="bg-emerald-50 border border-emerald-250 text-emerald-900 px-4 py-3 rounded-xl text-xs font-semibold flex items-center justify-between shadow-2xs animate-fadeIn no-print">
+          <div className="flex items-center gap-2.5">
+            <CheckCircle2 className="h-4.5 w-4.5 text-emerald-600 shrink-0" />
+            <span>{backupSuccessMsg}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setBackupSuccessMsg('')}
+            className="text-emerald-700 hover:text-emerald-950 text-sm font-bold p-1 rounded hover:bg-emerald-100/80 transition"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* Barra de Filtros y Configuración (Línea de Negocio + Divisa) - no-print */}
       <div className="bg-white border border-slate-200/80 rounded-2xl p-4 shadow-3xs flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 animate-fadeIn no-print" id="reports-filter-config-bar">
@@ -568,6 +721,31 @@ export default function ReportsCenter({
                   </p>
                 </div>
               </button>
+
+              {/* Report 5: Full System Backup (Multi-Sheet Excel) */}
+              <button
+                onClick={() => setSelectedReport('full_backup')}
+                className={`w-full text-left p-4 rounded-xl border transition-all flex items-start gap-3.5 ${
+                  selectedReport === 'full_backup' 
+                    ? 'bg-emerald-50/70 border-emerald-300 ring-2 ring-emerald-500/20' 
+                    : 'border-slate-150 hover:bg-emerald-50/30 hover:border-emerald-250'
+                }`}
+              >
+                <div className={`p-2 rounded-lg shrink-0 ${selectedReport === 'full_backup' ? 'bg-emerald-600 text-white' : 'bg-emerald-100 text-emerald-700'}`}>
+                  <Database className="h-5 w-5" />
+                </div>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-slate-900 text-xs block">5. Respaldo Completo del Sistema</span>
+                    <span className="text-[9px] font-mono font-bold bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded uppercase">
+                      Multi-Hoja
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-slate-500 leading-relaxed font-medium">
+                    Copia de seguridad integral en Excel (.xlsx) con 6 pestañas: resumen, inventario, celdas, pedidos, auditoría y conteos.
+                  </p>
+                </div>
+              </button>
             </div>
           </div>
         </div>
@@ -681,6 +859,100 @@ export default function ReportsCenter({
                 </div>
               )}
 
+              {selectedReport === 'full_backup' && (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1.5 bg-emerald-100 text-emerald-700 rounded-lg">
+                      <Database className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-extrabold text-slate-800">Respaldo Integral de Base de Datos WMS</h4>
+                      <span className="text-[10px] font-mono text-emerald-600 font-bold">Libro de Excel (.xlsx) con 6 Hojas Completas</span>
+                    </div>
+                  </div>
+
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    Este proceso extrae y consolida en un único archivo Excel todas las entidades de la base de datos de almacenamiento, ideal para copias de seguridad de auditoría fiscal, resguardo ante contingencias o análisis externo.
+                  </p>
+
+                  {/* 6 Sheets Summary Grid */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5 font-mono">
+                          <FileText className="h-3.5 w-3.5 text-indigo-500" />
+                          1. Resumen_General
+                        </span>
+                        <span className="text-[9px] bg-slate-200/70 text-slate-600 font-bold px-1.5 py-0.5 rounded font-mono">19 KPIs</span>
+                      </div>
+                      <p className="text-[10px] text-slate-500 leading-tight">Metadatos, valuación monetaria, ocupación y configuración.</p>
+                    </div>
+
+                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5 font-mono">
+                          <Package className="h-3.5 w-3.5 text-blue-500" />
+                          2. Inventario
+                        </span>
+                        <span className="text-[9px] bg-blue-100 text-blue-700 font-bold px-1.5 py-0.5 rounded font-mono">{filteredInventoryByLine.length} SKUs</span>
+                      </div>
+                      <p className="text-[10px] text-slate-500 leading-tight">Catálogo maestro, existencias, precios de costo y vencimientos.</p>
+                    </div>
+
+                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5 font-mono">
+                          <Layers className="h-3.5 w-3.5 text-amber-500" />
+                          3. Ubicaciones_Celdas
+                        </span>
+                        <span className="text-[9px] bg-amber-100 text-amber-700 font-bold px-1.5 py-0.5 rounded font-mono">{filteredBinsByLine.length} celdas</span>
+                      </div>
+                      <p className="text-[10px] text-slate-500 leading-tight">Estructura física, pasillos, estantes, capacidad y SKU alojado.</p>
+                    </div>
+
+                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5 font-mono">
+                          <Sliders className="h-3.5 w-3.5 text-emerald-500" />
+                          4. Pedidos_Transacciones
+                        </span>
+                        <span className="text-[9px] bg-emerald-100 text-emerald-700 font-bold px-1.5 py-0.5 rounded font-mono">{filteredOrdersByLine.length} órdenes</span>
+                      </div>
+                      <p className="text-[10px] text-slate-500 leading-tight">Inbound y Outbound, estado, transportistas y desglose de items.</p>
+                    </div>
+
+                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5 font-mono">
+                          <History className="h-3.5 w-3.5 text-purple-500" />
+                          5. Historial_Auditoria
+                        </span>
+                        <span className="text-[9px] bg-purple-100 text-purple-700 font-bold px-1.5 py-0.5 rounded font-mono">{filteredLogsByLine.length} logs</span>
+                      </div>
+                      <p className="text-[10px] text-slate-500 leading-tight">Trazabilidad de eventos, marcas temporales y operarios.</p>
+                    </div>
+
+                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5 font-mono">
+                          <CheckCircle2 className="h-3.5 w-3.5 text-teal-500" />
+                          6. Conteos_Ciclicos
+                        </span>
+                        <span className="text-[9px] bg-teal-100 text-teal-700 font-bold px-1.5 py-0.5 rounded font-mono">{countedSessions.length} conteos</span>
+                      </div>
+                      <p className="text-[10px] text-slate-500 leading-tight">Sesiones de conteo físico, stock en sistema y desviaciones.</p>
+                    </div>
+                  </div>
+
+                  <div className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl flex items-center justify-between text-xs font-semibold text-emerald-900 mt-1">
+                    <span className="flex items-center gap-1.5">
+                      <ShieldCheck className="h-4 w-4 text-emerald-600" />
+                      Archivo respaldado: <code className="font-mono text-[11px] bg-white px-1.5 py-0.5 rounded border border-emerald-200">Respaldo_Completo_WMS_{new Date().toISOString().slice(0, 10)}.xlsx</code>
+                    </span>
+                  </div>
+                </div>
+              )}
+
               {/* Custom Report Notes */}
               <div className="space-y-1.5 pt-2">
                 <label className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block font-sans">Notas o Comentarios del Reporte (Opcional)</label>
@@ -703,11 +975,25 @@ export default function ReportsCenter({
                   else if (selectedReport === 'inventory') handleExportInventory();
                   else if (selectedReport === 'audit_logs') handleExportLogs();
                   else if (selectedReport === 'orders_flow') handleExportOrders();
+                  else if (selectedReport === 'full_backup') handleExportFullBackup();
                 }}
-                className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs py-3 px-4 rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95"
+                className={`flex-1 text-white font-extrabold text-xs py-3 px-4 rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95 ${
+                  selectedReport === 'full_backup'
+                    ? 'bg-emerald-600 hover:bg-emerald-700 ring-2 ring-emerald-500/20'
+                    : 'bg-emerald-600 hover:bg-emerald-700'
+                }`}
               >
-                <FileSpreadsheet className="h-4.5 w-4.5" />
-                Descargar Excel (.xlsx)
+                {selectedReport === 'full_backup' ? (
+                  <>
+                    <Database className="h-4.5 w-4.5" />
+                    Descargar Respaldo Completo en Excel (.xlsx)
+                  </>
+                ) : (
+                  <>
+                    <FileSpreadsheet className="h-4.5 w-4.5" />
+                    Descargar Excel (.xlsx)
+                  </>
+                )}
               </button>
             </div>
           </div>

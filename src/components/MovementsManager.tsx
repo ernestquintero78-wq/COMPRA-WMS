@@ -361,8 +361,8 @@ export const MovementsManager: React.FC<MovementsManagerProps> = ({
             onClick={handleDownloadInsumosUbicacion}
             className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs py-2.5 px-4 rounded-xl shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95 border border-emerald-500"
           >
-            <FileSpreadsheet className="h-4.5 w-4.5 text-emerald-100" />
-            Exportar Insumos por Ubicación
+            <FileSpreadsheet className="h-4.5 w-4.5 text-white" />
+            <span>Exportar Insumos por Ubicación</span>
           </button>
 
           <div className="bg-slate-50 border border-slate-200/60 px-3.5 py-2 rounded-xl flex items-center gap-2 shrink-0">
@@ -445,7 +445,7 @@ export const MovementsManager: React.FC<MovementsManagerProps> = ({
           <div className="border-b border-slate-100 pb-3 flex justify-between items-center">
             <div className="flex items-center gap-2">
               <Move className="h-5 w-5 text-indigo-600 animate-bounce" />
-              <h3 className="text-sm font-bold text-slate-800">Asistente de Traslado Rápido</h3>
+              <h3 className="text-sm font-bold text-slate-800">Panel de Traslado Rápido de Celdas</h3>
             </div>
             <span className="text-[9px] font-mono font-bold bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-md border border-indigo-150">PRO MODO</span>
           </div>
