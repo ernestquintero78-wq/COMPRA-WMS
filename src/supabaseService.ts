@@ -1,63 +1,49 @@
 import { supabase } from './lib/supabaseClient';
 import { Bin, InventoryItem, Order, ActivityLog } from './types';
+import { generateAllStandardLocations } from './lib/warehouseStructure';
 
 const env = (import.meta as any).env || {};
 const isSupabaseConfigured = env.VITE_SUPABASE_URL && env.VITE_SUPABASE_ANON_KEY && !env.VITE_SUPABASE_URL.includes('placeholder');
 
 let forceLocalFallback = !isSupabaseConfigured;
 
-// Helper template generators
+// Helper template generators: Generates the exact official 539 locations
 export const getTemplateBins = () => {
-  const templateBins: any[] = [];
-  const aisles = ['A', 'B', 'C', 'D'];
-  const racks = ['01', '02'];
-  const shelves = ['S1', 'S2'];
-  const levels = ['L1', 'L2', 'L3'];
+  const standardLocs = generateAllStandardLocations();
+  return standardLocs.map(loc => {
+    let maxW = loc.levelNum === 1 ? 1000 : loc.levelNum === 7 ? 250 : 500;
+    let sku = '';
+    let qty = 0;
+    let status = 'Empty';
 
-  for (const aisle of aisles) {
-    for (const rack of racks) {
-      for (const shelf of shelves) {
-        for (const level of levels) {
-          const id = `${aisle}-${rack}-${shelf}-${level}`;
-          let maxW = 500;
-          if (level === 'L3') maxW = 100;
-          if (level === 'L1') maxW = 1000;
-
-          let sku = '';
-          let qty = 0;
-          let status = 'Empty';
-
-          if (aisle === 'A' && rack === '01' && shelf === 'S1' && level === 'L1') {
-            sku = 'ROB-CPU-i7';
-            qty = 40;
-            status = 'Partial';
-          } else if (aisle === 'A' && rack === '01' && shelf === 'S1' && level === 'L2') {
-            sku = 'BATT-LIPO-SM';
-            qty = 150;
-            status = 'Full';
-          } else if (aisle === 'B' && rack === '02' && shelf === 'S2' && level === 'L1') {
-            sku = 'SENS-PROX-24';
-            qty = 80;
-            status = 'Partial';
-          }
-
-          templateBins.push({
-            id,
-            aisle,
-            rack,
-            shelf,
-            level,
-            max_weight: maxW,
-            max_volume: 50,
-            occupied_sku: sku || null,
-            occupied_qty: qty,
-            status
-          });
-        }
-      }
+    // Seed sample test inventory into canonical positions
+    if (loc.id === 'A-01-01') {
+      sku = 'ROB-CPU-i7';
+      qty = 40;
+      status = 'Partial';
+    } else if (loc.id === 'A-01-02') {
+      sku = 'BATT-LIPO-SM';
+      qty = 150;
+      status = 'Full';
+    } else if (loc.id === 'B-01-01') {
+      sku = 'SENS-PROX-24';
+      qty = 80;
+      status = 'Partial';
     }
-  }
-  return templateBins;
+
+    return {
+      id: loc.id,
+      aisle: loc.aisle,
+      rack: String(loc.rackNum),
+      shelf: `Cara ${loc.face}`,
+      level: loc.level,
+      max_weight: maxW,
+      max_volume: 50,
+      occupied_sku: sku || null,
+      occupied_qty: qty,
+      status
+    };
+  });
 };
 
 export const getTemplateInventory = () => [
@@ -495,11 +481,18 @@ export const saveWMSSupabaseData = async (
     }
 
     try {
-      const { error } = await supabase.from('bins').upsert(binsToUpsert, { onConflict: 'id' });
-      if (error) throw new Error(error.message);
-    } catch (err) {
+      // Upsert in safe chunks of 100 to avoid payload limits on bulk generation (539 locations)
+      const chunkSize = 100;
+      for (let i = 0; i < binsToUpsert.length; i += chunkSize) {
+        const chunk = binsToUpsert.slice(i, i + chunkSize);
+        const { error } = await supabase.from('bins').upsert(chunk, { onConflict: 'id' });
+        if (error) throw new Error(error.message);
+      }
+      localStorage.setItem('wms_local_bins', JSON.stringify(binsToUpsert));
+    } catch (err: any) {
       console.warn('Supabase save bins failed, writing locally instead:', err);
       localStorage.setItem('wms_local_bins', JSON.stringify(binsToUpsert));
+      throw err;
     }
 
   } else if (type === 'Inventory') {

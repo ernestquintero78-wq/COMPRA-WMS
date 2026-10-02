@@ -1988,6 +1988,10 @@ export default function App() {
               onSelectBin={setSelectedBin}
               activePath={activePickingPath}
               onUpdateBins={handleUpdateBins}
+              isReadOnly={isReadOnly}
+              userRole={platformRole}
+              inventory={inventory}
+              onNavigateToDashboard={() => setActiveTab('dashboard')}
             />
           )}
 

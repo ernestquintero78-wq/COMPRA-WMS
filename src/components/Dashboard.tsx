@@ -574,8 +574,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const [turnoverSearch, setTurnoverSearch] = useState('');
 
   // Heatmap picking states
-  const [heatmapAisle, setHeatmapAisle] = useState<'All' | 'A' | 'B' | 'C' | 'D'>('All');
-  const [heatmapLevel, setHeatmapLevel] = useState<'All' | 'L1' | 'L2' | 'L3'>('All');
+  const [heatmapAisle, setHeatmapAisle] = useState<string>('All');
+  const [heatmapLevel, setHeatmapLevel] = useState<string>('All');
   const [selectedHeatmapBin, setSelectedHeatmapBin] = useState<Bin | null>(null);
 
   // Period filter states (for Metrics)
@@ -819,11 +819,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
   };
 
   // 1. Calculations
-  const totalSlots = filteredBinsByLine.length || 48;
-  const occupiedSlots = filteredBinsByLine.filter(b => b.status !== 'Empty').length;
+  const totalSlots = filteredBinsByLine.length || bins.length || 539;
+  const occupiedSlots = filteredBinsByLine.filter(b => b.status !== 'Empty' || Boolean(b.occupiedSku) || (b.occupiedQty && b.occupiedQty > 0)).length;
   const fullSlots = filteredBinsByLine.filter(b => b.status === 'Full').length;
   const partialSlots = filteredBinsByLine.filter(b => b.status === 'Partial').length;
-  const emptySlots = filteredBinsByLine.filter(b => b.status === 'Empty').length;
+  const emptySlots = filteredBinsByLine.filter(b => b.status === 'Empty' && !b.occupiedSku && (!b.occupiedQty || b.occupiedQty === 0)).length;
 
   const occupancyRate = totalSlots ? Math.round((occupiedSlots / totalSlots) * 100) : 0;
   
@@ -949,18 +949,27 @@ export const Dashboard: React.FC<DashboardProps> = ({
     { name: 'Vacía / Abierta', value: emptySlots, color: '#10b981' }
   ];
 
-  // Occupancy by Aisle
-  const aisles = ['A', 'B', 'C', 'D'];
-  const aisleBarData = aisles.map(aisle => {
-    const aisleBins = filteredBinsByLine.filter(b => b.aisle === aisle);
-    const total = aisleBins.length;
-    const filled = aisleBins.filter(b => b.status !== 'Empty').length;
-    return {
-      name: `Pasillo ${aisle}`,
-      Occupied: filled,
-      Capacity: total
-    };
-  });
+  // Occupancy by Aisle (Dynamically includes standard A-F and any newly created custom aisles)
+  const aisles = React.useMemo(() => {
+    const set = new Set<string>(['A', 'B', 'C', 'D', 'E', 'F']);
+    filteredBinsByLine.forEach(b => {
+      if (b.aisle) set.add(b.aisle);
+    });
+    return Array.from(set).sort();
+  }, [filteredBinsByLine]);
+
+  const aisleBarData = React.useMemo(() => {
+    return aisles.map(aisle => {
+      const aisleBins = filteredBinsByLine.filter(b => b.aisle === aisle);
+      const total = aisleBins.length;
+      const filled = aisleBins.filter(b => b.status !== 'Empty' || Boolean(b.occupiedSku) || (b.occupiedQty && b.occupiedQty > 0)).length;
+      return {
+        name: `Pasillo ${aisle}`,
+        Occupied: filled,
+        Capacity: total
+      };
+    });
+  }, [aisles, filteredBinsByLine]);
 
   // Simplified historic transactional activity data
   const activityData = React.useMemo(() => {
@@ -1327,22 +1336,29 @@ export const Dashboard: React.FC<DashboardProps> = ({
       }
     });
 
-    // Calcular estadísticas agregadas
-    const aisleTotals: Record<string, number> = { A: 0, B: 0, C: 0, D: 0 };
-    const levelTotals: Record<string, number> = { L1: 0, L2: 0, L3: 0 };
+    // Calcular estadísticas agregadas dinámicas
+    const aisleTotals: Record<string, number> = {};
+    const levelTotals: Record<string, number> = {};
+    const rackTotals: Record<number, { total: number; occupied: number; picks: number }> = {};
     let maxDensity = 1;
     let totalDensitySum = 0;
 
-    Object.entries(densityMap).forEach(([binId, density]) => {
-      const parts = binId.split('-');
-      if (parts.length >= 4) {
-        const aisle = parts[0];
-        const level = parts[3];
-        
-        if (aisleTotals[aisle] !== undefined) aisleTotals[aisle] += density;
-        if (levelTotals[level] !== undefined) levelTotals[level] += density;
+    filteredBinsByLine.forEach(b => {
+      const density = densityMap[b.id] || 0;
+      const aisle = b.aisle || b.id.split('-')[0] || 'A';
+      const level = b.level || b.id.split('-')[2] || b.id.split('-')[3] || '01';
+      const rackNum = parseInt(b.rack?.replace(/\D/g, '') || '', 10) || 1;
+
+      aisleTotals[aisle] = (aisleTotals[aisle] || 0) + density;
+      levelTotals[level] = (levelTotals[level] || 0) + density;
+
+      if (!rackTotals[rackNum]) {
+        rackTotals[rackNum] = { total: 0, occupied: 0, picks: 0 };
       }
-      
+      rackTotals[rackNum].total++;
+      if (b.occupiedQty > 0 || Boolean(b.occupiedSku)) rackTotals[rackNum].occupied++;
+      rackTotals[rackNum].picks += density;
+
       if (density > maxDensity) maxDensity = density;
       totalDensitySum += density;
     });
@@ -1358,7 +1374,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
     });
 
     // Encontrar nivel más activo
-    let hottestLevel = 'L1';
+    let hottestLevel = '01';
     let maxLevelVal = -1;
     Object.entries(levelTotals).forEach(([lvl, val]) => {
       if (val > maxLevelVal) {
@@ -1372,33 +1388,32 @@ export const Dashboard: React.FC<DashboardProps> = ({
     
     filteredBinsByLine.forEach(b => {
       const density = densityMap[b.id] || 0;
-      const parts = b.id.split('-');
-      const aisle = parts[0];
-      const level = parts[3];
+      const aisle = b.aisle || b.id.split('-')[0];
+      const level = b.level || b.id.split('-')[2] || b.id.split('-')[3] || '01';
 
       if (b.occupiedSku && b.occupiedSku !== '') {
         const item = filteredInventoryByLine.find(i => i.sku === b.occupiedSku);
         if (item) {
-          // Desalineación 1: Alta densidad en nivel superior L3 (retraso ergonómico)
-          if (density > 12 && level === 'L3') {
+          // Desalineación 1: Alta densidad en nivel superior (07, 06, L3)
+          if (density > 10 && (level === '07' || level === '06' || level === 'L3')) {
             mislottedItems.push({
               sku: b.occupiedSku,
               name: item.name,
               binId: b.id,
               density,
-              reason: 'Alta frecuencia de picking almacenada en nivel alto (L3). Provoca retrasos y fatiga del operario.',
-              fix: 'Reubicar SKU a un espacio libre en Nivel L1 de alta accesibilidad.'
+              reason: `Alta frecuencia de picking (${density} picks) almacenada en nivel alto (Nivel ${level}). Provoca retrasos ergonómicos y tiempos muertos.`,
+              fix: 'Reubicar SKU a un espacio libre en Nivel 01 o 02 de alta accesibilidad ergonómica.'
             });
           }
-          // Desalineación 2: Muy baja densidad en niveles premium de alta accesibilidad (L1 de Pasillo A o B)
-          else if (density <= 2 && level === 'L1' && (aisle === 'A' || aisle === 'B')) {
+          // Desalineación 2: Muy baja densidad en niveles premium de alta accesibilidad (Nivel 01 de Pasillo A o B)
+          else if (density <= 2 && (level === '01' || level === 'L1') && (aisle === 'A' || aisle === 'B')) {
             mislottedItems.push({
               sku: b.occupiedSku,
               name: item.name,
               binId: b.id,
               density,
-              reason: 'Producto de baja rotación ocupando ubicación premium de alta accesibilidad.',
-              fix: 'Mover SKU a Pasillo D / Nivel L3 para liberar esta celda premium.'
+              reason: `Producto de baja rotación (${density} picks) ocupando celda premium de alta velocidad en Pasillo ${aisle}.`,
+              fix: 'Mover SKU a niveles intermedios o pasillos de almacenamiento general para liberar esta celda de alta rotación.'
             });
           }
         }
@@ -1411,6 +1426,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       densityMap,
       aisleTotals,
       levelTotals,
+      rackTotals,
       maxDensity,
       totalDensitySum,
       hottestAisle,
@@ -3548,6 +3564,164 @@ export const Dashboard: React.FC<DashboardProps> = ({
         })()}
       </div>
 
+      {/* SECCIÓN: MÉTRICAS DE ALMACÉN E INFRAESTRUCTURA DE RACKS Y PASILLOS (CONECTIVIDAD TOTAL) */}
+      <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-xs space-y-6">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-150">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="p-1 px-2 rounded-lg bg-blue-50 border border-blue-200 text-blue-700 text-[10px] font-mono font-bold uppercase tracking-wider flex items-center gap-1.5">
+                <Boxes className="h-3.5 w-3.5" />
+                Infraestructura Conectada
+              </span>
+              <h2 className="text-sm font-black text-slate-900 uppercase tracking-tight">
+                Métricas de Almacén: Racks, Pasillos y Ocupación
+              </h2>
+            </div>
+            <p className="text-xs text-slate-500">
+              Datos sincronizados en tiempo real con el módulo <strong>Mapa de Almacén</strong>. Monitoreo de utilización física por estantería y nivel de servicio.
+            </p>
+          </div>
+
+          <button
+            onClick={() => onTabChange('map')}
+            className="self-start lg:self-auto px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer shadow-xs active:scale-95 shrink-0"
+          >
+            <MapPin className="h-4 w-4" />
+            <span>Abrir Mapa de Almacén Completo →</span>
+          </button>
+        </div>
+
+        {/* 4 Indicadores Clave de Infraestructura */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="bg-slate-50 border border-slate-150 p-4 rounded-2xl">
+            <span className="text-[10px] font-mono font-bold text-slate-400 uppercase tracking-wider block">Total Celdas Físicas</span>
+            <span className="text-2xl font-black text-slate-900 font-mono block mt-1">{bins.length}</span>
+            <span className="text-[10px] text-blue-600 font-bold block mt-0.5">
+              {bins.length >= 539 ? '✓ Estructura Oficial 539' : `${bins.length} configuradas`}
+            </span>
+          </div>
+
+          <div className="bg-slate-50 border border-slate-150 p-4 rounded-2xl">
+            <span className="text-[10px] font-mono font-bold text-slate-400 uppercase tracking-wider block">Ocupación Física</span>
+            <span className="text-2xl font-black text-slate-900 font-mono block mt-1">{occupancyRate}%</span>
+            <span className="text-[10px] text-slate-500 block mt-0.5">
+              {occupiedSlots} ocupadas · {totalSlots - occupiedSlots} libres
+            </span>
+          </div>
+
+          <div className="bg-slate-50 border border-slate-150 p-4 rounded-2xl">
+            <span className="text-[10px] font-mono font-bold text-slate-400 uppercase tracking-wider block">Capacidad Instalada</span>
+            <span className="text-2xl font-black text-slate-900 font-mono block mt-1">
+              {(bins.reduce((sum, b) => sum + b.maxWeight, 0) / 1000).toFixed(1)} T
+            </span>
+            <span className="text-[10px] text-slate-500 block mt-0.5">Límite de peso en racks</span>
+          </div>
+
+          <div className="bg-slate-50 border border-slate-150 p-4 rounded-2xl">
+            <span className="text-[10px] font-mono font-bold text-slate-400 uppercase tracking-wider block">Racks & Pasillos</span>
+            <span className="text-2xl font-black text-indigo-700 font-mono block mt-1">
+              {new Set(bins.map(b => b.rack)).size} Racks
+            </span>
+            <span className="text-[10px] text-indigo-600 font-bold block mt-0.5">
+              {new Set(bins.map(b => b.aisle)).size} Pasillos activos
+            </span>
+          </div>
+        </div>
+
+        {/* Desglose de Ocupación por Rack Físico */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-slate-800 uppercase tracking-tight flex items-center gap-1.5">
+              <Layers className="h-4 w-4 text-blue-600" />
+              <span>Ocupación y Densidad por Rack Físico:</span>
+            </span>
+            <span className="text-[11px] text-slate-400 font-mono">
+              Haz clic en cualquier rack para inspeccionarlo en el mapa
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+            {Object.entries(pickingDensityData.rackTotals)
+              .sort(([a], [b]) => Number(a) - Number(b))
+              .map(([rackNumStr, rData]: [string, any]) => {
+                const rNum = Number(rackNumStr);
+                const pct = rData.total > 0 ? Math.round((rData.occupied / rData.total) * 100) : 0;
+                const isFull = pct >= 90;
+                const isPartial = pct >= 50;
+
+                return (
+                  <div
+                    key={rNum}
+                    onClick={() => {
+                      localStorage.setItem('owms_selected_map_rack', String(rNum));
+                      onTabChange('map');
+                    }}
+                    className="p-3.5 bg-slate-50/80 hover:bg-white border border-slate-200 hover:border-blue-400 rounded-2xl transition cursor-pointer flex flex-col justify-between gap-2.5 shadow-2xs hover:shadow-xs group"
+                  >
+                    <div>
+                      <div className="flex justify-between items-center">
+                        <span className="font-mono font-black text-sm text-slate-800 group-hover:text-blue-600 transition">
+                          RACK {rNum}
+                        </span>
+                        <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded ${
+                          isFull ? 'bg-rose-100 text-rose-800' : isPartial ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'
+                        }`}>
+                          {pct}%
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-slate-500 font-mono mt-0.5 block">
+                        {rData.occupied} de {rData.total} celdas
+                      </span>
+                    </div>
+
+                    <div className="space-y-1">
+                      <div className="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden">
+                        <div 
+                          className={`h-full rounded-full transition-all ${
+                            isFull ? 'bg-rose-500' : isPartial ? 'bg-amber-500' : 'bg-emerald-500'
+                          }`}
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                      <div className="flex justify-between text-[9px] text-slate-400 font-mono pt-1">
+                        <span>Picks: {rData.picks}</span>
+                        <span className="text-blue-600 font-bold group-hover:underline">Ver Mapa →</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+          </div>
+        </div>
+
+        {/* Desglose por Pasillo */}
+        <div className="space-y-3 pt-2 border-t border-slate-100">
+          <span className="text-xs font-bold text-slate-800 uppercase tracking-tight block">
+            Actividad de Picking por Pasillo:
+          </span>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
+            {Object.entries(pickingDensityData.aisleTotals)
+              .sort(([a], [b]) => a.localeCompare(b))
+              .map(([aisle, picks]) => {
+                const aisleBins = bins.filter(b => b.aisle === aisle);
+                const aisleOccupied = aisleBins.filter(b => b.occupiedQty > 0 || Boolean(b.occupiedSku)).length;
+
+                return (
+                  <div key={aisle} className="p-3 bg-white border border-slate-200 rounded-xl space-y-1 text-center">
+                    <span className="font-mono font-black text-xs text-blue-700 block">PASILLO {aisle}</span>
+                    <span className="text-base font-black font-mono text-slate-800 block">{picks} <span className="text-[10px] font-normal text-slate-400">picks</span></span>
+                    <span className="text-[10px] text-slate-500 font-mono block">
+                      {aisleOccupied} / {aisleBins.length} ocupadas
+                    </span>
+                  </div>
+                );
+              })}
+          </div>
+        </div>
+
+      </div>
+
       {/* SECCIÓN: MAPA DE CALOR DE DENSIDAD DE PICKING (SLOTTING HEATMAP) */}
       <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-xs space-y-6">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-100">
@@ -3583,7 +3757,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <div className="flex items-center gap-2.5 bg-slate-50 border border-slate-200/60 p-2.5 px-4 rounded-2xl">
               <div className="text-right">
                 <span className="text-[9px] uppercase font-bold text-slate-400 block">Zona de Mayor Tráfico</span>
-                <span className="text-sm font-black text-rose-600 font-mono">Pasillo {pickingDensityData.hottestAisle} • {pickingDensityData.hottestLevel}</span>
+                <span className="text-sm font-black text-rose-600 font-mono">Pasillo {pickingDensityData.hottestAisle} • Nivel {pickingDensityData.hottestLevel}</span>
               </div>
               <div className="h-9 w-9 rounded-xl bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-500 shrink-0">
                 <Flame className="h-5 w-5 animate-bounce" />
@@ -3595,11 +3769,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
         {/* Filters and Controls Bar */}
         <div className="flex flex-wrap items-center justify-between gap-4 bg-slate-50/50 p-4 border border-slate-100 rounded-2xl">
           <div className="flex flex-wrap items-center gap-4 text-xs font-semibold text-slate-600">
-            {/* Filter by Aisle */}
+            {/* Filter by Aisle - Dinámico con todos los pasillos del almacén */}
             <div className="flex items-center gap-2">
               <span>Filtrar Pasillo:</span>
-              <div className="flex bg-white p-1 rounded-lg border border-slate-200 shadow-3xs">
-                {(['All', 'A', 'B', 'C', 'D'] as const).map((aisle) => (
+              <div className="flex bg-white p-1 rounded-lg border border-slate-200 shadow-3xs flex-wrap gap-1">
+                {['All', ...Array.from(new Set(bins.map(b => b.aisle))).filter(Boolean).sort()].map((aisle) => (
                   <button
                     key={aisle}
                     onClick={() => {
@@ -3616,22 +3790,22 @@ export const Dashboard: React.FC<DashboardProps> = ({
               </div>
             </div>
 
-            {/* Filter by Level */}
+            {/* Filter by Level - Dinámico con los niveles 01 a 07 */}
             <div className="flex items-center gap-2">
-              <span>Nivel Estantería:</span>
-              <div className="flex bg-white p-1 rounded-lg border border-slate-200 shadow-3xs">
-                {(['All', 'L1', 'L2', 'L3'] as const).map((lvl) => (
+              <span>Nivel:</span>
+              <div className="flex bg-white p-1 rounded-lg border border-slate-200 shadow-3xs flex-wrap gap-1">
+                {['All', ...Array.from(new Set(bins.map(b => b.level))).filter(Boolean).sort((a,b) => (a as string).localeCompare(b as string, undefined, { numeric: true }))].map((lvl) => (
                   <button
                     key={lvl}
                     onClick={() => {
                       setHeatmapLevel(lvl);
                       setSelectedHeatmapBin(null);
                     }}
-                    className={`px-2.5 py-1 rounded-md text-[11px] font-bold cursor-pointer transition ${
+                    className={`px-2 py-1 rounded-md text-[11px] font-bold cursor-pointer transition ${
                       heatmapLevel === lvl ? 'bg-indigo-600 text-white shadow-xs' : 'text-slate-500 hover:text-slate-800'
                     }`}
                   >
-                    {lvl === 'All' ? 'Todos' : lvl}
+                    {lvl === 'All' ? 'Todos' : `N${lvl}`}
                   </button>
                 ))}
               </div>
@@ -3666,7 +3840,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                <span className="text-[10px] text-slate-400 font-mono font-semibold">
                  Mostrando {bins.filter(b => {
                    if (heatmapAisle !== 'All' && b.aisle !== heatmapAisle) return false;
-                   if (heatmapLevel !== 'All' && b.id.split('-')[3] !== heatmapLevel) return false;
+                   if (heatmapLevel !== 'All' && b.level !== heatmapLevel) return false;
                    return true;
                  }).length} de {bins.length} celdas
                </span>
@@ -3675,14 +3849,14 @@ export const Dashboard: React.FC<DashboardProps> = ({
              {/* Bins Heatmap representation */}
              <div className="bg-slate-50 border border-slate-150 p-4 rounded-2xl min-h-[300px] flex flex-col justify-between">
                
-               <div className="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-6 lg:grid-cols-7 xl:grid-cols-8 gap-3">
+               <div className="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-6 lg:grid-cols-7 xl:grid-cols-8 gap-3 max-h-[500px] overflow-y-auto pr-1">
                  {(() => {
                    let filteredBins = bins;
                    if (heatmapAisle !== 'All') {
                      filteredBins = filteredBins.filter(b => b.aisle === heatmapAisle);
                    }
                    if (heatmapLevel !== 'All') {
-                     filteredBins = filteredBins.filter(b => b.id.split('-')[3] === heatmapLevel);
+                     filteredBins = filteredBins.filter(b => b.level === heatmapLevel || b.id.split('-').pop() === heatmapLevel);
                    }
  
                    if (filteredBins.length === 0) {
@@ -3700,24 +3874,24 @@ export const Dashboard: React.FC<DashboardProps> = ({
                      // Definir color de calor del mapa
                      let heatColorClass = 'bg-slate-50 hover:bg-slate-100/80 border-slate-200/85 text-slate-700 shadow-3xs';
                      let badgeClass = 'bg-slate-200/70 text-slate-700';
-                      let densityLabelColor = 'text-slate-500';
+                     let densityLabelColor = 'text-slate-500';
  
                      if (density >= 16) {
                        heatColorClass = 'bg-rose-50 hover:bg-rose-100/90 border-rose-350 text-rose-950 shadow-xs shadow-rose-500/10 animate-pulse';
                        badgeClass = 'bg-rose-200/90 text-rose-800';
-                        densityLabelColor = 'text-rose-600';
+                       densityLabelColor = 'text-rose-600';
                      } else if (density >= 9) {
                        heatColorClass = 'bg-amber-50 hover:bg-amber-100/90 border-amber-350 text-amber-950 shadow-3xs';
                        badgeClass = 'bg-amber-200 text-amber-800';
-                        densityLabelColor = 'text-amber-700';
+                       densityLabelColor = 'text-amber-700';
                      } else if (density >= 4) {
                        heatColorClass = 'bg-emerald-50 hover:bg-emerald-100/90 border-emerald-350 text-emerald-950 shadow-3xs';
                        badgeClass = 'bg-emerald-200 text-emerald-800';
-                        densityLabelColor = 'text-emerald-700';
+                       densityLabelColor = 'text-emerald-700';
                      } else if (density >= 1) {
                        heatColorClass = 'bg-blue-50 hover:bg-blue-100/90 border-blue-350 text-blue-950 shadow-3xs';
                        badgeClass = 'bg-blue-200 text-blue-800';
-                        densityLabelColor = 'text-blue-700';
+                       densityLabelColor = 'text-blue-700';
                      }
  
                      return (
@@ -3732,11 +3906,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
                          title={`Celda: ${bin.id} | Densidad de Picking: ${density}`}
                        >
                          <div className="flex justify-between items-center gap-1 min-w-0">
-                           <span className="text-[10px] font-black font-mono tracking-wider opacity-85 whitespace-nowrap truncate" title={bin.id.split('-').slice(0,2).join('-')}>
-                             {bin.id.split('-').slice(0,2).join('-')}
+                           <span className="text-[10px] font-black font-mono tracking-wider opacity-85 whitespace-nowrap truncate" title={bin.id}>
+                             {bin.id}
                            </span>
                            <span className={`text-[8px] px-1 py-0.5 rounded font-mono font-black uppercase tracking-wider leading-none shrink-0 ${badgeClass}`}>
-                             {bin.id.split('-')[3]}
+                             N{bin.level}
                            </span>
                          </div>
                          
@@ -3769,23 +3943,23 @@ export const Dashboard: React.FC<DashboardProps> = ({
                      <span>Inactivo (0)</span>
                    </div>
                    <div className="flex items-center gap-1">
-                     <span className="h-3 w-3 rounded-md bg-blue-200 border border-blue-300 block" />
+                     <span className="h-3 w-3 rounded-md bg-blue-150 border border-blue-300 block" />
                      <span>Bajo (1-3)</span>
                    </div>
                    <div className="flex items-center gap-1">
-                     <span className="h-3 w-3 rounded-md bg-emerald-400 border border-emerald-500 block" />
+                     <span className="h-3 w-3 rounded-md bg-emerald-250 border border-emerald-400 block" />
                      <span>Medio (4-8)</span>
                    </div>
                    <div className="flex items-center gap-1">
-                     <span className="h-3 w-3 rounded-md bg-amber-400 border border-amber-500 block" />
+                     <span className="h-3 w-3 rounded-md bg-amber-250 border border-amber-400 block" />
                      <span>Alto (9-15)</span>
                    </div>
                    <div className="flex items-center gap-1">
-                     <span className="h-3 w-3 rounded-md bg-rose-500 border border-rose-600 block animate-pulse" />
+                     <span className="h-3 w-3 rounded-md bg-rose-350 border border-rose-500 block" />
                      <span>Crítico (16+)</span>
                    </div>
                  </div>
-               </div>
+                </div>
  
              </div>
            </div>
@@ -3804,7 +3978,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                    <div className="flex items-center justify-between border-b border-slate-200 pb-3">
                      <div className="flex items-center gap-2">
                        <div className="h-8 w-8 bg-indigo-50 border border-indigo-100 text-indigo-600 rounded-lg flex items-center justify-center font-bold font-mono text-sm shadow-3xs">
-                         {selectedHeatmapBin.id.split('-')[0]}
+                         {selectedHeatmapBin.aisle || selectedHeatmapBin.id.split('-')[0]}
                        </div>
                        <div>
                          <h4 className="text-xs font-black text-slate-800 font-mono uppercase tracking-tight">
@@ -3880,27 +4054,35 @@ export const Dashboard: React.FC<DashboardProps> = ({
                      <p className="text-[11px] text-indigo-900 leading-relaxed font-medium">
                        {(() => {
                          const d = pickingDensityData.densityMap[selectedHeatmapBin.id] || 0;
-                         const parts = selectedHeatmapBin.id.split('-');
-                         const aisle = parts[0];
-                         const level = parts[3];
+                         const aisle = selectedHeatmapBin.aisle;
+                         const level = selectedHeatmapBin.level;
  
                          if (selectedHeatmapBin.occupiedSku) {
-                           if (d > 12 && level === 'L3') {
-                             return `⚠️ Alerta: El SKU ${selectedHeatmapBin.occupiedSku} tiene una densidad de picking extremadamente alta (${d}) pero está ubicado en el Nivel L3 (alto). Se recomienda moverlo de inmediato al Nivel L1 de los pasillos A o B para reducir la fatiga operativa y el tiempo de extracción en un 40%.`;
+                           if (d > 10 && (level === '07' || level === '06' || level === 'L3')) {
+                             return `⚠️ Alerta: El SKU ${selectedHeatmapBin.occupiedSku} tiene una densidad de picking alta (${d} picks) pero está en el Nivel ${level} (alto). Se aconseja moverlo a niveles inferiores (Nivel 01 o 02) para reducir tiempos y fatiga operativa.`;
                            }
-                           if (d <= 2 && level === 'L1' && (aisle === 'A' || aisle === 'B')) {
-                             return `⚠️ Alerta: Celda Premium bloqueada. El SKU ${selectedHeatmapBin.occupiedSku} registra casi nula actividad de picking (${d}) pero ocupa un espacio de nivel de piso en el pasillo central (${aisle}). Mueva este artículo lento al Pasillo D / Nivel L3 para liberar este valioso espacio para mercancía de alta rotación.`;
+                           if (d <= 2 && (level === '01' || level === 'L1') && (aisle === 'A' || aisle === 'B')) {
+                             return `⚠️ Alerta: Celda Premium subutilizada. El SKU ${selectedHeatmapBin.occupiedSku} registra casi nula actividad (${d} picks) pero ocupa nivel bajo en Pasillo ${aisle}. Puede reubicarse a niveles altos para liberar este espacio para mercancía de alta rotación.`;
                            }
-                           return `✓ Correcto: El SKU ${selectedHeatmapBin.occupiedSku} está ubicado de manera acorde a su frecuencia operativa en el almacén. Sin acciones recomendadas de reubicación por el momento.`;
+                           return `✓ Correcto: El SKU ${selectedHeatmapBin.occupiedSku} está ubicado acordemente a su frecuencia operativa en el almacén.`;
                          } else {
-                           if (level === 'L1' && (aisle === 'A' || aisle === 'B')) {
-                             return `💡 Celda Premium Disponible: Al estar ubicada en el nivel inferior (${level}) del pasillo central (${aisle}), se aconseja asignar esta celda exclusivamente a productos de tipo "Fast-Movers" con alta tasa de rotación para maximizar el rendimiento.`;
+                           if ((level === '01' || level === 'L1') && (aisle === 'A' || aisle === 'B')) {
+                             return `💡 Celda Premium Disponible: Al estar en nivel bajo de acceso rápido en Pasillo ${aisle}, se aconseja asignarla prioritariamente a productos de alta rotación.`;
                            }
-                           return `💡 Ubicación de Almacenamiento Estándar: Ideal para SKU de rotación media o lenta. Excelente para albergar stock de seguridad a largo plazo.`;
+                           return `💡 Ubicación disponible: Ideal para albergar stock estándar o reposición.`;
                          }
                        })()}
                      </p>
                    </div>
+
+                   {/* Direct link to Warehouse Map */}
+                   <button
+                     onClick={() => onTabChange('map')}
+                     className="w-full mt-3 py-2.5 px-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs transition flex items-center justify-center gap-2 shadow-xs cursor-pointer active:scale-95"
+                   >
+                     <MapPin className="h-3.5 w-3.5" />
+                     <span>Inspeccionar en Mapa de Almacén →</span>
+                   </button>
                  </div>
  
                  <button
@@ -4515,6 +4697,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       onSelectBin={setConfigSelectedBin}
                       activePath={[]}
                       onUpdateBins={onUpdateBins}
+                      isReadOnly={isReadOnly}
+                      inventory={inventory}
+                      onNavigateToDashboard={() => setDashboardSubTab('metrics')}
                     />
                   </div>
 
