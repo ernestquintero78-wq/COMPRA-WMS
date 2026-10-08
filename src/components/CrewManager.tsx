@@ -22,8 +22,50 @@ import {
   RefreshCw, 
   Layers,
   Eye,
-  EyeOff
+  EyeOff,
+  Settings,
+  BookOpen,
+  Sliders,
+  Bell,
+  Smartphone,
+  CheckCircle2,
+  HelpCircle,
+  FileText,
+  Check,
+  RotateCcw,
+  Palette
 } from 'lucide-react';
+import { UserManual } from './UserManual';
+
+export interface CrewSettings {
+  pinLength: '4' | '6';
+  requirePinForCriticalOps: boolean;
+  maxPinAttempts: number;
+  sessionTimeoutMinutes: number;
+  defaultDeviceId: string;
+  scannerBeep: boolean;
+  notificationChannel: 'visual' | 'toast' | 'both';
+  auditAlertSound: boolean;
+  allowSelfContactEdit: boolean;
+  minHierarchyForNewCrew: 'Administrador' | 'Supervisor';
+  activeShift: 'Turno Matutino (06:00 - 14:00)' | 'Turno Vespertino (14:00 - 22:00)' | 'Turno Nocturno (22:00 - 06:00)';
+  autoLogShiftLogin: boolean;
+}
+
+export const DEFAULT_CREW_SETTINGS: CrewSettings = {
+  pinLength: '4',
+  requirePinForCriticalOps: true,
+  maxPinAttempts: 5,
+  sessionTimeoutMinutes: 480,
+  defaultDeviceId: 'ZEBRA-TC21-01',
+  scannerBeep: true,
+  notificationChannel: 'both',
+  auditAlertSound: true,
+  allowSelfContactEdit: true,
+  minHierarchyForNewCrew: 'Supervisor',
+  activeShift: 'Turno Matutino (06:00 - 14:00)',
+  autoLogShiftLogin: true,
+};
 
 export interface OperatorProfile {
   id: string;
@@ -50,9 +92,17 @@ interface CrewManagerProps {
   activeOperator: OperatorProfile | null;
   onSelectOperator: (profile: OperatorProfile | null) => void;
   platformUser?: any;
+  onNavigateToAppearance?: () => void;
+  onNavigateToManual?: () => void;
 }
 
-export const CrewManager: React.FC<CrewManagerProps> = ({ activeOperator, onSelectOperator, platformUser }) => {
+export const CrewManager: React.FC<CrewManagerProps> = ({ 
+  activeOperator, 
+  onSelectOperator, 
+  platformUser,
+  onNavigateToAppearance,
+  onNavigateToManual
+}) => {
   const [crewList, setCrewList] = useState<OperatorProfile[]>([]);
   const [positions, setPositions] = useState<WmsPosition[]>([]);
   
@@ -76,7 +126,35 @@ export const CrewManager: React.FC<CrewManagerProps> = ({ activeOperator, onSele
   const isReadOnly = platformRole === 'Operador';
   
   // Tab navigation inside Crew Manager
-  const [activeSubTab, setActiveSubTab] = useState<'crew' | 'positions'>('crew');
+  const [activeSubTab, setActiveSubTab] = useState<'crew' | 'positions' | 'config' | 'manual'>('crew');
+
+  // Crew & Operation Settings state
+  const [crewSettings, setCrewSettings] = useState<CrewSettings>(() => {
+    const saved = localStorage.getItem('OWMS_CREW_SETTINGS');
+    if (saved) {
+      try {
+        return { ...DEFAULT_CREW_SETTINGS, ...JSON.parse(saved) };
+      } catch (e) {
+        return DEFAULT_CREW_SETTINGS;
+      }
+    }
+    return DEFAULT_CREW_SETTINGS;
+  });
+
+  const handleUpdateCrewSettings = (updated: Partial<CrewSettings>) => {
+    const next = { ...crewSettings, ...updated };
+    setCrewSettings(next);
+    localStorage.setItem('OWMS_CREW_SETTINGS', JSON.stringify(next));
+    setSuccessMsg('Configuración actualizada y guardada correctamente.');
+    setTimeout(() => setSuccessMsg(''), 4000);
+  };
+
+  const handleResetCrewSettings = () => {
+    setCrewSettings(DEFAULT_CREW_SETTINGS);
+    localStorage.setItem('OWMS_CREW_SETTINGS', JSON.stringify(DEFAULT_CREW_SETTINGS));
+    setSuccessMsg('Se restablecieron los parámetros operativos a valores predeterminados.');
+    setTimeout(() => setSuccessMsg(''), 4000);
+  };
 
   // Register crew form fields
   const [showRegisterForm, setShowRegisterForm] = useState(false);
@@ -129,7 +207,7 @@ export const CrewManager: React.FC<CrewManagerProps> = ({ activeOperator, onSele
         { id: 'pos-1', name: 'Administrador de WMS', hierarchy: 'Administrador', description: 'Acceso total y configuración técnica del almacén.' },
         { id: 'pos-2', name: 'Supervisor de WMS', hierarchy: 'Supervisor', description: 'Gestión operacional, asignación de tareas y auditorías.' },
         { id: 'pos-3', name: 'Operario de Picking', hierarchy: 'Operario', description: 'Surtido de pedidos, escaneo de códigos de barra.' },
-        { id: 'pos-4', name: 'Montacarguista', hierarchy: 'Operario', description: 'Colocación en altura y reubicación de tarimas.' },
+        { id: 'pos-4', name: 'Montacarguista', hierarchy: 'Operario', description: 'Colocación en altura y reubicación de cargas.' },
         { id: 'pos-5', name: 'Analista de Entrada', hierarchy: 'Operario', description: 'Recepción, validación y conteo de mercancía entrante.' }
       ];
       setPositions(defaultPositions);
@@ -674,11 +752,11 @@ export const CrewManager: React.FC<CrewManagerProps> = ({ activeOperator, onSele
         </div>
       )}
 
-      {/* Sub-navegación: Personal vs Posiciones */}
-      <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-250/60 shadow-3xs w-full md:w-fit">
+      {/* Sub-navegación: Personal vs Posiciones vs Configuraciones vs Manual de Usuarios */}
+      <div className="flex flex-wrap bg-slate-100 p-1 rounded-xl border border-slate-250/60 shadow-3xs w-full md:w-fit gap-1">
         <button
           onClick={() => { setActiveSubTab('crew'); setErrorMsg(''); }}
-          className={`flex-1 md:flex-initial flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer select-none ${
+          className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer select-none ${
             activeSubTab === 'crew'
               ? 'bg-white text-indigo-650 shadow-xs'
               : 'text-slate-600 hover:text-indigo-650 hover:bg-slate-50/50'
@@ -689,14 +767,36 @@ export const CrewManager: React.FC<CrewManagerProps> = ({ activeOperator, onSele
         </button>
         <button
           onClick={() => { setActiveSubTab('positions'); setErrorMsg(''); }}
-          className={`flex-1 md:flex-initial flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer select-none ${
+          className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer select-none ${
             activeSubTab === 'positions'
               ? 'bg-white text-indigo-650 shadow-xs'
               : 'text-slate-600 hover:text-indigo-650 hover:bg-slate-50/50'
           }`}
         >
           <Briefcase className="h-4 w-4" />
-          <span>Catálogo de Posiciones (Dar de Alta)</span>
+          <span>Catálogo de Posiciones</span>
+        </button>
+        <button
+          onClick={() => { setActiveSubTab('config'); setErrorMsg(''); }}
+          className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer select-none ${
+            activeSubTab === 'config'
+              ? 'bg-white text-indigo-650 shadow-xs'
+              : 'text-slate-600 hover:text-indigo-650 hover:bg-slate-50/50'
+          }`}
+        >
+          <Settings className="h-4 w-4" />
+          <span>Configuraciones</span>
+        </button>
+        <button
+          onClick={() => { setActiveSubTab('manual'); setErrorMsg(''); }}
+          className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer select-none ${
+            activeSubTab === 'manual'
+              ? 'bg-white text-indigo-650 shadow-xs'
+              : 'text-slate-600 hover:text-indigo-650 hover:bg-slate-50/50'
+          }`}
+        >
+          <BookOpen className="h-4 w-4" />
+          <span>Manual de Usuarios</span>
         </button>
       </div>
 
@@ -1487,6 +1587,482 @@ export const CrewManager: React.FC<CrewManagerProps> = ({ activeOperator, onSele
             </div>
           </div>
 
+        </div>
+      )}
+
+      {/* 3. SECCIÓN DE CONFIGURACIONES DEL PERSONAL & SISTEMA */}
+      {activeSubTab === 'config' && (
+        <div className="space-y-6 animate-fadeIn">
+          {/* Header Card de Configuraciones */}
+          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-xl bg-indigo-50 border border-indigo-150 text-indigo-650 flex items-center justify-center shrink-0">
+                <Settings className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-extrabold text-slate-800 tracking-tight">
+                  Configuraciones Operativas del Personal & Terminales
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Establezca parámetros de seguridad de PIN, terminales de radiofrecuencia (RF), canales de alerta y reglas de turno.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 w-full md:w-auto justify-end">
+              <button
+                type="button"
+                onClick={handleResetCrewSettings}
+                className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                title="Restablecer valores originales"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                <span>Restablecer</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleUpdateCrewSettings(crewSettings)}
+                className="px-4 py-1.5 bg-indigo-650 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+              >
+                <Save className="h-3.5 w-3.5" />
+                <span>Guardar Cambios</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Banner de Enlace a Apariencia y Manual */}
+          <div className="bg-gradient-to-r from-slate-900 to-indigo-950 text-white p-4 sm:p-5 rounded-2xl border border-slate-800 shadow-xs flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 rounded">
+                  Configuración Global
+                </span>
+                <span className="text-xs font-bold text-slate-200">
+                  Identidad Visual & Documentación
+                </span>
+              </div>
+              <p className="text-xs text-slate-300 max-w-xl">
+                Personalice el logotipo, colores del sistema o consulte las guías operativas paso a paso para el personal de almacén.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {onNavigateToAppearance && (
+                <button
+                  type="button"
+                  onClick={onNavigateToAppearance}
+                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+                >
+                  <Palette className="h-3.5 w-3.5" />
+                  <span>Imagen y Colores</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => onNavigateToManual ? onNavigateToManual() : setActiveSubTab('manual')}
+                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-bold transition flex items-center gap-1.5 border border-slate-700 cursor-pointer"
+              >
+                <BookOpen className="h-3.5 w-3.5" />
+                <span>Manual de Usuarios</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Grid de 4 Bloques de Configuración */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+            {/* Bloque 1: Políticas de Seguridad y PIN */}
+            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+              <div className="border-b border-slate-100 pb-3 flex items-center gap-2 text-slate-800">
+                <Lock className="h-4 w-4 text-indigo-600" />
+                <h4 className="text-xs font-bold font-mono uppercase">Seguridad y Autenticación con PIN</h4>
+              </div>
+
+              <div className="space-y-4 text-xs">
+                {/* Longitud de PIN */}
+                <div className="flex justify-between items-center gap-4">
+                  <div>
+                    <label className="font-bold text-slate-700 block">Longitud de PIN Requerida</label>
+                    <span className="text-[11px] text-slate-400 block">Dígitos solicitados a los operarios para registrarse.</span>
+                  </div>
+                  <select
+                    value={crewSettings.pinLength}
+                    onChange={(e) => handleUpdateCrewSettings({ pinLength: e.target.value as '4' | '6' })}
+                    className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 font-mono font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  >
+                    <option value="4">4 Dígitos (Acceso Rápido)</option>
+                    <option value="6">6 Dígitos (Alta Seguridad)</option>
+                  </select>
+                </div>
+
+                {/* Confirmación para operaciones críticas */}
+                <div className="flex justify-between items-center gap-4 pt-2 border-t border-slate-100">
+                  <div>
+                    <label className="font-bold text-slate-700 block">Confirmación en Operaciones Críticas</label>
+                    <span className="text-[11px] text-slate-400 block">Solicitar PIN al autorizar ajustes de stock o movimientos masivos.</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={crewSettings.requirePinForCriticalOps}
+                    onChange={(e) => handleUpdateCrewSettings({ requirePinForCriticalOps: e.target.checked })}
+                    className="h-4 w-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                  />
+                </div>
+
+                {/* Intentos fallidos máximos */}
+                <div className="flex justify-between items-center gap-4 pt-2 border-t border-slate-100">
+                  <div>
+                    <label className="font-bold text-slate-700 block">Límite de Intentos Fallidos de PIN</label>
+                    <span className="text-[11px] text-slate-400 block">Bloquear temporalmente el terminal si se supera el umbral.</span>
+                  </div>
+                  <select
+                    value={crewSettings.maxPinAttempts}
+                    onChange={(e) => handleUpdateCrewSettings({ maxPinAttempts: Number(e.target.value) })}
+                    className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 font-mono font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  >
+                    <option value="3">3 intentos</option>
+                    <option value="5">5 intentos (Recomendado)</option>
+                    <option value="10">10 intentos</option>
+                    <option value="0">Ilimitado</option>
+                  </select>
+                </div>
+
+                {/* Timeout de inactividad */}
+                <div className="flex justify-between items-center gap-4 pt-2 border-t border-slate-100">
+                  <div>
+                    <label className="font-bold text-slate-700 block">Tiempo de Expiración de Sesión</label>
+                    <span className="text-[11px] text-slate-400 block">Cierre automático de sesión de operario inactivo.</span>
+                  </div>
+                  <select
+                    value={crewSettings.sessionTimeoutMinutes}
+                    onChange={(e) => handleUpdateCrewSettings({ sessionTimeoutMinutes: Number(e.target.value) })}
+                    className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 font-mono font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  >
+                    <option value="15">15 minutos</option>
+                    <option value="30">30 minutos</option>
+                    <option value="60">1 hora</option>
+                    <option value="480">8 horas (Jornada de Turno)</option>
+                    <option value="0">Sin cierre automático</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* Bloque 2: Terminales y Dispositivos de Radiofrecuencia (RF) */}
+            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+              <div className="border-b border-slate-100 pb-3 flex items-center gap-2 text-slate-800">
+                <Smartphone className="h-4 w-4 text-emerald-600" />
+                <h4 className="text-xs font-bold font-mono uppercase">Terminales y Lectores de Código de Barras (RF)</h4>
+              </div>
+
+              <div className="space-y-4 text-xs">
+                {/* Dispositivo predeterminado */}
+                <div className="flex justify-between items-center gap-4">
+                  <div>
+                    <label className="font-bold text-slate-700 block">Terminal Predeterminado para Altas</label>
+                    <span className="text-[11px] text-slate-400 block">Asignado por defecto a nuevos operarios registrados.</span>
+                  </div>
+                  <select
+                    value={crewSettings.defaultDeviceId}
+                    onChange={(e) => handleUpdateCrewSettings({ defaultDeviceId: e.target.value })}
+                    className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 font-mono font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  >
+                    <option value="ZEBRA-TC21-01">ZEBRA TC21 (Lector 1D/2D)</option>
+                    <option value="ZEBRA-TC52-09">ZEBRA TC52 (Industrial Alto Alcance)</option>
+                    <option value="HONEYWELL-EDA51">HONEYWELL EDA51</option>
+                    <option value="TABLET-SAMSUNG-ACTIVE">Tablet Samsung Active (Andén)</option>
+                  </select>
+                </div>
+
+                {/* Beep acústico en escaneo */}
+                <div className="flex justify-between items-center gap-4 pt-2 border-t border-slate-100">
+                  <div>
+                    <label className="font-bold text-slate-700 block">Sonido Acústico y Feedback Háptico</label>
+                    <span className="text-[11px] text-slate-400 block">Emitir señal sonora de confirmación al escanear código de barras.</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={crewSettings.scannerBeep}
+                    onChange={(e) => handleUpdateCrewSettings({ scannerBeep: e.target.checked })}
+                    className="h-4 w-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer"
+                  />
+                </div>
+
+                {/* Sonido de advertencia en discrepancias */}
+                <div className="flex justify-between items-center gap-4 pt-2 border-t border-slate-100">
+                  <div>
+                    <label className="font-bold text-slate-700 block">Alerta de Discrepancia en Auditoría</label>
+                    <span className="text-[11px] text-slate-400 block">Aviso prioritario si el conteo físico difiere del stock de sistema.</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={crewSettings.auditAlertSound}
+                    onChange={(e) => handleUpdateCrewSettings({ auditAlertSound: e.target.checked })}
+                    className="h-4 w-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Bloque 3: Canal de Notificaciones Preferido */}
+            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+              <div className="border-b border-slate-100 pb-3 flex items-center gap-2 text-slate-800">
+                <Bell className="h-4 w-4 text-amber-600" />
+                <h4 className="text-xs font-bold font-mono uppercase">Canal de Notificaciones Preferido</h4>
+              </div>
+
+              <div className="space-y-3 text-xs">
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  Configure el nivel de interrupción y el medio de visualización de las alertas operativas del WMS:
+                </p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
+                  {/* Opción 1: Visuales */}
+                  <button
+                    type="button"
+                    onClick={() => handleUpdateCrewSettings({ notificationChannel: 'visual' })}
+                    className={`p-3 rounded-xl border text-left transition cursor-pointer flex flex-col justify-between ${
+                      crewSettings.notificationChannel === 'visual'
+                        ? 'border-amber-400 bg-amber-50/50 shadow-3xs'
+                        : 'border-slate-200 hover:border-slate-300 bg-white'
+                    }`}
+                  >
+                    <div>
+                      <div className="font-bold text-slate-800 flex items-center justify-between">
+                        <span>Panel Superior</span>
+                        {crewSettings.notificationChannel === 'visual' && (
+                          <Check className="h-3.5 w-3.5 text-amber-600" />
+                        )}
+                      </div>
+                      <p className="text-[10px] text-slate-500 mt-1 leading-tight">
+                        Avisos fijos discretos en la cabecera sin ventanas emergentes.
+                      </p>
+                    </div>
+                  </button>
+
+                  {/* Opción 2: Toast */}
+                  <button
+                    type="button"
+                    onClick={() => handleUpdateCrewSettings({ notificationChannel: 'toast' })}
+                    className={`p-3 rounded-xl border text-left transition cursor-pointer flex flex-col justify-between ${
+                      crewSettings.notificationChannel === 'toast'
+                        ? 'border-amber-400 bg-amber-50/50 shadow-3xs'
+                        : 'border-slate-200 hover:border-slate-300 bg-white'
+                    }`}
+                  >
+                    <div>
+                      <div className="font-bold text-slate-800 flex items-center justify-between">
+                        <span>Avisos Toast</span>
+                        {crewSettings.notificationChannel === 'toast' && (
+                          <Check className="h-3.5 w-3.5 text-amber-600" />
+                        )}
+                      </div>
+                      <p className="text-[10px] text-slate-500 mt-1 leading-tight">
+                        Notificaciones emergentes temporales que desaparecen automáticamente.
+                      </p>
+                    </div>
+                  </button>
+
+                  {/* Opción 3: Ambos */}
+                  <button
+                    type="button"
+                    onClick={() => handleUpdateCrewSettings({ notificationChannel: 'both' })}
+                    className={`p-3 rounded-xl border text-left transition cursor-pointer flex flex-col justify-between ${
+                      crewSettings.notificationChannel === 'both'
+                        ? 'border-indigo-500 bg-indigo-50/50 shadow-3xs'
+                        : 'border-slate-200 hover:border-slate-300 bg-white'
+                    }`}
+                  >
+                    <div>
+                      <div className="font-bold text-slate-800 flex items-center justify-between">
+                        <span>Ambos Canales</span>
+                        {crewSettings.notificationChannel === 'both' && (
+                          <Check className="h-3.5 w-3.5 text-indigo-600" />
+                        )}
+                      </div>
+                      <p className="text-[10px] text-slate-500 mt-1 leading-tight">
+                        Recomendado para supervisores: visualización simultánea garantizada.
+                      </p>
+                    </div>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Bloque 4: Gestión de Turnos y Políticas de Autogestión */}
+            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+              <div className="border-b border-slate-100 pb-3 flex items-center gap-2 text-slate-800">
+                <Briefcase className="h-4 w-4 text-blue-600" />
+                <h4 className="text-xs font-bold font-mono uppercase">Control de Turnos y Permisos Operativos</h4>
+              </div>
+
+              <div className="space-y-4 text-xs">
+                {/* Turno activo */}
+                <div className="flex justify-between items-center gap-4">
+                  <div>
+                    <label className="font-bold text-slate-700 block">Turno de Trabajo Actual</label>
+                    <span className="text-[11px] text-slate-400 block">Jornada asignada para el registro cronológico del almacén.</span>
+                  </div>
+                  <select
+                    value={crewSettings.activeShift}
+                    onChange={(e) => handleUpdateCrewSettings({ activeShift: e.target.value as any })}
+                    className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 text-slate-800 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 text-xs"
+                  >
+                    <option value="Turno Matutino (06:00 - 14:00)">Turno Matutino (06:00 - 14:00)</option>
+                    <option value="Turno Vespertino (14:00 - 22:00)">Turno Vespertino (14:00 - 22:00)</option>
+                    <option value="Turno Nocturno (22:00 - 06:00)">Turno Nocturno (22:00 - 06:00)</option>
+                  </select>
+                </div>
+
+                {/* Auto log */}
+                <div className="flex justify-between items-center gap-4 pt-2 border-t border-slate-100">
+                  <div>
+                    <label className="font-bold text-slate-700 block">Registro Automático de Entrada/Salida</label>
+                    <span className="text-[11px] text-slate-400 block">Crear un registro inmutable en los Logs al cambiar de operador.</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={crewSettings.autoLogShiftLogin}
+                    onChange={(e) => handleUpdateCrewSettings({ autoLogShiftLogin: e.target.checked })}
+                    className="h-4 w-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer"
+                  />
+                </div>
+
+                {/* Autogestión de perfil */}
+                <div className="flex justify-between items-center gap-4 pt-2 border-t border-slate-100">
+                  <div>
+                    <label className="font-bold text-slate-700 block">Permitir Edición Propia de Contacto</label>
+                    <span className="text-[11px] text-slate-400 block">Los operarios pueden actualizar su teléfono y departamento personal.</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={crewSettings.allowSelfContactEdit}
+                    onChange={(e) => handleUpdateCrewSettings({ allowSelfContactEdit: e.target.checked })}
+                    className="h-4 w-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer"
+                  />
+                </div>
+
+                {/* Nivel para crear personal */}
+                <div className="flex justify-between items-center gap-4 pt-2 border-t border-slate-100">
+                  <div>
+                    <label className="font-bold text-slate-700 block">Nivel Mínimo para Registrar Personal</label>
+                    <span className="text-[11px] text-slate-400 block">Jerarquía necesaria para dar de alta perfiles de operarios.</span>
+                  </div>
+                  <select
+                    value={crewSettings.minHierarchyForNewCrew}
+                    onChange={(e) => handleUpdateCrewSettings({ minHierarchyForNewCrew: e.target.value as any })}
+                    className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  >
+                    <option value="Supervisor">Supervisores y Administradores</option>
+                    <option value="Administrador">Solo Administradores</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* 4. SECCIÓN DE MANUAL DE USUARIOS & GUÍA OPERATIVA */}
+      {activeSubTab === 'manual' && (
+        <div className="space-y-6 animate-fadeIn">
+          {/* Tarjeta de Bienvenida al Manual de Usuarios */}
+          <div className="bg-slate-900 text-white p-6 rounded-2xl border border-slate-800 shadow-md">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <div className="h-7 w-7 rounded-lg bg-blue-500/20 text-blue-400 flex items-center justify-center border border-blue-500/30">
+                    <BookOpen className="h-4 w-4" />
+                  </div>
+                  <span className="text-xs font-black tracking-widest text-blue-400 uppercase font-mono">
+                    MANUAL DE USUARIOS DEL SISTEMA WMS
+                  </span>
+                </div>
+                <h3 className="text-base sm:text-lg font-black tracking-tight text-white">
+                  Guía Operativa, Protocolos de Personal y Procedimientos Estándar
+                </h3>
+                <p className="text-xs text-slate-300 max-w-2xl leading-relaxed">
+                  Consulte las instrucciones completas paso a paso para el uso de terminales de radiofrecuencia, gestión de jerarquías de personal, auditorías físicas y recepción de inventario.
+                </p>
+              </div>
+
+              {/* Botón para saltar directo a la sección de Personal */}
+              <div className="shrink-0 bg-slate-800/80 p-3 rounded-xl border border-slate-700/60 text-xs space-y-1 text-slate-300">
+                <span className="text-[10px] font-mono text-slate-400 uppercase font-bold block">Acceso Rápido</span>
+                <span className="font-bold text-white flex items-center gap-1.5">
+                  <UserCheck className="h-3.5 w-3.5 text-emerald-400" />
+                  Capítulo: Registro de Personal & PIN
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Guía Rápida por Rol de Almacén */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            
+            {/* Rol 1: Operarios */}
+            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-3xs space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-black text-slate-800 font-mono flex items-center gap-1.5">
+                  <UserCheck className="h-4 w-4 text-blue-600" />
+                  Operarios de Almacén
+                </span>
+                <span className="text-[9px] bg-slate-100 text-slate-600 font-bold px-2 py-0.5 rounded">
+                  Picking / Putaway
+                </span>
+              </div>
+              <ul className="text-xs text-slate-600 space-y-1.5 leading-relaxed">
+                <li>• Inicie sesión rápida con su <strong>código PIN</strong> en la terminal asignada.</li>
+                <li>• Escanee el código de barras del producto y de la celda de destino.</li>
+                <li>• En conteos cíclicos, ingrese la cantidad física real contada en el estante.</li>
+                <li>• Cierre su sesión al finalizar su turno laboral para seguridad.</li>
+              </ul>
+            </div>
+
+            {/* Rol 2: Supervisores */}
+            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-3xs space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-black text-slate-800 font-mono flex items-center gap-1.5">
+                  <Shield className="h-4 w-4 text-amber-600" />
+                  Supervisores de Turno
+                </span>
+                <span className="text-[9px] bg-amber-50 text-amber-700 border border-amber-200 font-bold px-2 py-0.5 rounded">
+                  Gestión / Validación
+                </span>
+              </div>
+              <ul className="text-xs text-slate-600 space-y-1.5 leading-relaxed">
+                <li>• Asigne operarios a órdenes prioritarias de entrada o salida.</li>
+                <li>• Cree nuevas posiciones en el <strong>Catálogo de Posiciones</strong>.</li>
+                <li>• Valide y firme las <strong>Actas Oficiales de Conteo Cíclico</strong>.</li>
+                <li>• Monitoree las alertas de sobrepeso en celdas de almacenamiento.</li>
+              </ul>
+            </div>
+
+            {/* Rol 3: Administradores */}
+            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-3xs space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-black text-slate-800 font-mono flex items-center gap-1.5">
+                  <Lock className="h-4 w-4 text-rose-600" />
+                  Administradores WMS
+                </span>
+                <span className="text-[9px] bg-rose-50 text-rose-700 border border-rose-200 font-bold px-2 py-0.5 rounded">
+                  Control Total
+                </span>
+              </div>
+              <ul className="text-xs text-slate-600 space-y-1.5 leading-relaxed">
+                <li>• Ajuste las <strong>Configuraciones</strong> de seguridad y dispositivos RF.</li>
+                <li>• Dé de baja o suspenda el acceso al sistema de personal inactivo.</li>
+                <li>• Realice copias de seguridad de auditoría y exportaciones fiscales.</li>
+                <li>• Gestione los almacenes, subalmacenes y reglas de volumetría.</li>
+              </ul>
+            </div>
+
+          </div>
+
+          {/* Componente Integrado de Manual de Usuarios Completo */}
+          <div className="border border-slate-200 rounded-2xl overflow-hidden bg-slate-50/50 p-2 sm:p-4">
+            <UserManual />
+          </div>
         </div>
       )}
 

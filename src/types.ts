@@ -27,6 +27,10 @@ export interface InventoryItem {
   cost?: number; // Cost of the item
   barcode?: string; // Barcode corresponding to the item
   imageUrl?: string; // Optional product image URL
+  superWarehouseId?: string; // ID of Superalmacén (e.g., 'wh-oxxo', 'wh-const', 'wh-trans')
+  superWarehouseName?: string; // e.g., 'Almacén OXXO'
+  warehouseId?: string; // ID of Almacén / Subalmacén (e.g., 'sub-oxxo-01')
+  warehouseName?: string; // e.g., 'OXXO - Perecederos y Cámara Fría'
 }
 
 export interface OrderItem {
@@ -46,6 +50,8 @@ export interface Order {
   shipmentDate?: string;     // Date shipped
   carrier?: string;          // Shipping carrier
   trackingNumber?: string;   // Carrier tracking code
+  destination?: string;      // Destination or customer
+  deliveryMethod?: string;   // Delivery / dispatch method
 }
 
 export interface ActivityLog {
@@ -62,4 +68,80 @@ export interface CycleCountSession {
   physical: number;
   system: number;
   deviation: number;
+  responsible?: string;
+  batchId?: string;
+  notes?: string;
+}
+
+export interface ConcludedAuditReport {
+  id: string;
+  folio: string;
+  date: string;
+  responsible: string;
+  responsibleRole: string;
+  supervisor: string;
+  location: string;
+  totalItems: number;
+  accurateItems: number;
+  discrepantItems: number;
+  accuracyRate: number;
+  totalPhysicalQty: number;
+  totalSystemQty: number;
+  netDeviation: number;
+  notes?: string;
+  timestamp: string;
+  items: {
+    sku: string;
+    name: string;
+    category: string;
+    location: string;
+    system: number;
+    physical: number;
+    deviation: number;
+    cost?: number;
+  }[];
+}
+
+export interface PlatformTheme {
+  logoUrl?: string;
+  logoType: 'image' | 'preset';
+  presetIcon: 'boxes' | 'truck' | 'package' | 'warehouse' | 'shield' | 'database';
+  platformName: string;
+  versionTag: string;
+  primaryColor: string;
+  sidebarColor: string;
+  canvasBg: 'slate' | 'gray' | 'zinc' | 'dark';
+}
+
+export interface SubWarehouse {
+  id: string;
+  warehouseId: string;
+  code: string;
+  name: string;
+  description?: string;
+  storageType: string;
+  capacityBinsOrUnits?: number;
+  currentOccupancy?: number;
+  locationArea?: string;
+  responsibleOperator?: string;
+  status: 'Activo' | 'Mantenimiento' | 'Inactivo';
+  categories?: string[]; // Categories assigned to this subwarehouse
+  createdAt: string;
+}
+
+export interface WarehouseSection {
+  id: string;
+  code: string;
+  name: string;
+  sectionType: string;
+  description?: string;
+  facilityLocation: string;
+  managerName?: string;
+  contactEmail?: string;
+  contactPhone?: string;
+  color: string;
+  categories?: string[]; // Categories assigned to this superwarehouse
+  subWarehouses: SubWarehouse[];
+  status: 'Activo' | 'Inactivo';
+  createdAt: string;
 }

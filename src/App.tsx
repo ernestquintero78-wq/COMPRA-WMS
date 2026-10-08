@@ -4,24 +4,23 @@ import {
   saveWMSSupabaseData,
   appendActivityLog
 } from './supabaseService';
-import { Bin, InventoryItem, Order, ActivityLog, CycleCountSession } from './types';
+import { Bin, InventoryItem, Order, ActivityLog, CycleCountSession, ConcludedAuditReport, PlatformTheme } from './types';
 import { WarehouseMap } from './components/WarehouseMap';
 import { Dashboard } from './components/Dashboard';
 import { PutawayOptimizer } from './components/PutawayOptimizer';
-import { OrdersManager } from './components/OrdersManager';
+import { DirectDispatchManager } from './components/DirectDispatchManager';
 import { InventoryManager } from './components/InventoryManager';
 import { BarcodeConsole } from './components/BarcodeConsole';
-import { PickingConsole } from './components/PickingConsole';
-import { PalletStandardizer } from './components/PalletStandardizer';
 import { CrewManager, OperatorProfile } from './components/CrewManager';
 import { LabelStation } from './components/LabelStation';
-import { KanbanBoard } from './components/KanbanBoard';
 import ReportsCenter from './components/ReportsCenter';
 import { MovementsManager } from './components/MovementsManager';
 import { UserManual } from './components/UserManual';
 import { AlertsManager } from './components/AlertsManager';
 import { Login } from './components/Login';
-import { BusinessLinesManager } from './components/BusinessLinesManager';
+import { CycleCountReportModal } from './components/CycleCountReportModal';
+import { PlatformSettings, DEFAULT_THEME_VALUES } from './components/PlatformSettings';
+import { ConfigurationHub } from './components/ConfigurationHub';
 import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts';
 import {
   Boxes,
@@ -39,14 +38,13 @@ import {
   Workflow,
   ShieldAlert,
   Barcode,
-  Layers,
   UserCheck,
   Printer,
   Compass,
-  Trello,
   ArrowDownLeft,
   ArrowUpRight,
   ClipboardCheck,
+  FileCheck,
   FileDown,
   Move,
   BookOpen,
@@ -61,7 +59,11 @@ import {
   PanelLeft,
   PanelLeftClose,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Settings,
+  Building2,
+  Shield,
+  Palette
 } from 'lucide-react';
 
 export default function App() {
@@ -75,6 +77,33 @@ export default function App() {
     const saved = localStorage.getItem('owms_sidebar_visible');
     return saved !== null ? saved === 'true' : true;
   });
+
+  // Platform visual theme & branding state (image & colors)
+  const [platformTheme, setPlatformTheme] = useState<PlatformTheme>(() => {
+    const saved = localStorage.getItem('OWMS_PLATFORM_THEME');
+    if (saved) {
+      try {
+        return { ...DEFAULT_THEME_VALUES, ...JSON.parse(saved) };
+      } catch (e) {
+        return DEFAULT_THEME_VALUES;
+      }
+    }
+    return DEFAULT_THEME_VALUES;
+  });
+
+  const handleUpdatePlatformTheme = (newTheme: PlatformTheme) => {
+    setPlatformTheme(newTheme);
+    localStorage.setItem('OWMS_PLATFORM_THEME', JSON.stringify(newTheme));
+    setStatusMsg('Apariencia de la plataforma actualizada con éxito.');
+    setTimeout(() => setStatusMsg(''), 4000);
+  };
+
+  const handleResetPlatformTheme = () => {
+    setPlatformTheme(DEFAULT_THEME_VALUES);
+    localStorage.setItem('OWMS_PLATFORM_THEME', JSON.stringify(DEFAULT_THEME_VALUES));
+    setStatusMsg('Se restablecieron la imagen y colores originales de la plataforma.');
+    setTimeout(() => setStatusMsg(''), 4000);
+  };
 
   const toggleSidebar = () => {
     setIsSidebarVisible(prev => {
@@ -219,9 +248,8 @@ export default function App() {
 
   // Sub-tabs for simplified operations
   const [entradasSubTab, setEntradasSubTab] = useState<'scan' | 'optimizer'>('scan');
-  const [salidasSubTab, setSalidasSubTab] = useState<'orders' | 'scan'>('orders');
-  const [conteosSubTab, setConteosSubTab] = useState<'scan' | 'history'>('scan');
-  const [pickPackSubTab, setPickPackSubTab] = useState<'picking' | 'kanban'>('picking');
+  const [conteosSubTab, setConteosSubTab] = useState<'scan' | 'history' | 'report'>('scan');
+  const [showCycleCountReportModal, setShowCycleCountReportModal] = useState<boolean>(false);
 
   // Active checked-in warehouse operator state
   const [activeOperator, setActiveOperator] = useState<OperatorProfile | null>(() => {
@@ -338,7 +366,11 @@ export default function App() {
       i.unitWidth, i.unitHeight, i.unitLength, i.unitWeight, i.supplier,
       i.cost || 0,
       i.barcode || '',
-      i.imageUrl || ''
+      i.imageUrl || '',
+      i.superWarehouseId || '',
+      i.superWarehouseName || '',
+      i.warehouseId || '',
+      i.warehouseName || ''
     ]);
 
     const orderRows = newOrdersList.map(o => [
@@ -462,6 +494,21 @@ export default function App() {
     setTimeout(() => setStatusMsg(''), 4000);
   };
 
+  const handleConcludeAuditSession = async (report?: ConcludedAuditReport) => {
+    const folio = report?.folio || `AUD-CC-${new Date().getFullYear()}`;
+    setStatusMsg(`Auditoría de conteo cíclico concluida con éxito (Folio: ${folio}). Acta archivada y lista para firma.`);
+    setTimeout(() => setStatusMsg(''), 6000);
+    try {
+      await appendActivityLog(
+        activeOperator ? `${activeOperator.name} (${activeOperator.role})` : (user?.displayName || 'Logistics Admin'),
+        'Concluir Auditoría y Conteo Cíclico',
+        `Folio: ${folio}. Responsable: ${report?.responsible || activeOperator?.name || 'Alex Mercer'}, Fecha: ${report?.date || new Date().toLocaleDateString()}. SKUs: ${report?.totalItems || activeSessionSkus.length}, Exactitud: ${report?.accuracyRate || 100}%, Desvío neto: ${report?.netDeviation || 0} uds.`
+      );
+    } catch (e) {
+      console.error('Error logging audit completion', e);
+    }
+  };
+
   // Add order callback
   const handleCreateOrder = async (newOrder: Partial<Order>) => {
     const fullOrder: Order = {
@@ -570,6 +617,77 @@ export default function App() {
     );
 
     await loadWarehouseData();
+  };
+
+  // Direct Outbound Dispatch (Sin necesidad de crear orden previa)
+  const handleDirectDispatch = async (dispatchData: {
+    sku: string;
+    qty: number;
+    destination: string;
+    deliveryMethod: string;
+    trackingNumber?: string;
+    notes?: string;
+  }): Promise<{ orderId: string; deductedBins: string[] } | null> => {
+    const item = inventory.find(i => i.sku === dispatchData.sku);
+    if (!item) return null;
+
+    const orderId = `OUT-${Math.floor(Date.now() / 1000).toString().slice(-6)}`;
+    const newOrder: Order = {
+      id: orderId,
+      type: 'Outbound',
+      priority: 'High',
+      status: 'Completed',
+      dateCreated: new Date().toISOString(),
+      shipmentDate: new Date().toISOString(),
+      items: [{ sku: dispatchData.sku, qty: dispatchData.qty }],
+      assignedTo: activeOperator ? activeOperator.name : (user?.displayName || 'Operador WMS'),
+      carrier: dispatchData.deliveryMethod,
+      destination: dispatchData.destination,
+      trackingNumber: dispatchData.trackingNumber || ''
+    };
+
+    const updatedInventory = [...inventory];
+    const invIdx = updatedInventory.findIndex(i => i.sku === dispatchData.sku);
+    if (invIdx !== -1) {
+      updatedInventory[invIdx].qty = Math.max(0, updatedInventory[invIdx].qty - dispatchData.qty);
+    }
+
+    const updatedBins = [...bins];
+    const deductedBins: string[] = [];
+    let pendingDeduct = dispatchData.qty;
+    const matchingStockBins = updatedBins.filter(b => b.occupiedSku === dispatchData.sku && b.occupiedQty > 0);
+
+    for (const storageBin of matchingStockBins) {
+      if (pendingDeduct <= 0) break;
+      const consumeAmount = Math.min(pendingDeduct, storageBin.occupiedQty);
+      storageBin.occupiedQty -= consumeAmount;
+      pendingDeduct -= consumeAmount;
+      deductedBins.push(`${storageBin.id} (${consumeAmount} uds)`);
+
+      if (storageBin.occupiedQty <= 0) {
+        storageBin.occupiedSku = '';
+        storageBin.status = 'Empty';
+      } else {
+        storageBin.status = 'Partial';
+      }
+    }
+
+    const updatedOrders = [newOrder, ...orders];
+
+    setOrders(updatedOrders);
+    setBins(updatedBins);
+    setInventory(updatedInventory);
+
+    await syncAllToGoogleSheetNow(updatedBins, updatedInventory, updatedOrders);
+    await appendActivityLog(
+      activeOperator ? `${activeOperator.name} (${activeOperator.role})` : (user?.displayName || 'Logistics Admin'),
+      'Salida Directa Despachada',
+      `Despachadas ${dispatchData.qty} uds de ${item.name} (${dispatchData.sku}) hacia "${dispatchData.destination}" vía "${dispatchData.deliveryMethod}". Celdas afectadas: ${deductedBins.join(', ') || 'Inventario General'}`
+    );
+
+    await loadWarehouseData();
+
+    return { orderId, deductedBins };
   };
 
   // Calculate real-time active system alerts
@@ -946,8 +1064,17 @@ export default function App() {
     return <Login onLogin={handlePlatformLogin} />;
   }
 
+  const canvasBgClass = 
+    platformTheme.canvasBg === 'gray' 
+      ? 'bg-gray-100' 
+      : platformTheme.canvasBg === 'zinc' 
+        ? 'bg-zinc-100' 
+        : platformTheme.canvasBg === 'dark' 
+          ? 'bg-slate-900 text-slate-100' 
+          : 'bg-slate-50';
+
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col font-sans selection:bg-blue-600 selection:text-white antialiased">
+    <div className={`min-h-screen ${canvasBgClass} flex flex-col font-sans selection:bg-blue-600 selection:text-white antialiased`}>
       
       {/* Top operational menu header bar */}
       <header className="bg-white border-b border-slate-200/50 sticky top-0 z-30 px-6 py-3 flex items-center justify-between shadow-xs select-none">
@@ -955,10 +1082,14 @@ export default function App() {
           {/* Botón para Ocultar / Mostrar Barra de Opciones Lateral */}
           <button
             onClick={toggleSidebar}
+            style={{
+              backgroundColor: !isSidebarVisible ? platformTheme.primaryColor : undefined,
+              borderColor: !isSidebarVisible ? platformTheme.primaryColor : undefined
+            }}
             className={`p-2 rounded-xl border transition cursor-pointer flex items-center justify-center ${
               isSidebarVisible
                 ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
-                : 'bg-blue-600 hover:bg-blue-700 text-white border-blue-600 shadow-sm'
+                : 'text-white shadow-sm'
             }`}
             title={isSidebarVisible ? "Ocultar barra de opciones lateral" : "Mostrar barra de opciones lateral"}
             aria-label={isSidebarVisible ? "Ocultar barra de opciones lateral" : "Mostrar barra de opciones lateral"}
@@ -970,13 +1101,46 @@ export default function App() {
             )}
           </button>
 
-          <div className="h-9 w-9 rounded-xl bg-blue-600 flex items-center justify-center text-white shrink-0 shadow shadow-blue-600/10">
-            <Boxes className="h-5.5 w-5.5" />
+          <div 
+            className="h-9 w-9 rounded-xl flex items-center justify-center text-white shrink-0 shadow overflow-hidden transition-colors"
+            style={{ backgroundColor: platformTheme.primaryColor }}
+          >
+            {platformTheme.logoType === 'image' && platformTheme.logoUrl ? (
+              <img 
+                src={platformTheme.logoUrl} 
+                alt={platformTheme.platformName} 
+                className="h-full w-full object-contain p-0.5" 
+              />
+            ) : (
+              (() => {
+                const iconMap: Record<string, any> = {
+                  boxes: Boxes,
+                  truck: Truck,
+                  package: Package,
+                  warehouse: Building2,
+                  shield: Shield,
+                  database: Database,
+                };
+                const IconComp = iconMap[platformTheme.presetIcon] || Boxes;
+                return <IconComp className="h-5.5 w-5.5" />;
+              })()
+            )}
           </div>
           <div>
             <div className="flex items-center gap-1.5 font-sans leading-none">
-              <span className="font-extrabold text-slate-800 tracking-tight text-sm">O-WMS PRO</span>
-              <span className="text-[9px] font-bold font-mono bg-blue-50 border border-blue-200 px-1 py-0.5 rounded text-blue-600">v1.2</span>
+              <span className="font-extrabold text-slate-800 tracking-tight text-sm">
+                {platformTheme.platformName || 'O-WMS PRO'}
+              </span>
+              <span 
+                className="text-[9px] font-bold font-mono px-1 py-0.5 rounded border"
+                style={{ 
+                  borderColor: platformTheme.primaryColor,
+                  color: platformTheme.primaryColor,
+                  backgroundColor: `${platformTheme.primaryColor}15`
+                }}
+              >
+                {platformTheme.versionTag || 'v1.2'}
+              </span>
             </div>
             <p className="text-[10px] text-slate-400 tracking-wide font-medium mt-1">
               Conectado: {user?.displayName || 'Admin de Logística'}
@@ -1044,7 +1208,10 @@ export default function App() {
         
         {/* Navigation Sidebar Panel Controls */}
         {isSidebarVisible ? (
-          <aside className="w-full md:w-64 bg-slate-900 border-r border-slate-800 text-slate-300 p-5 shrink-0 flex flex-col justify-between gap-6 relative select-none animate-fade-in transition-all">
+          <aside 
+            style={{ backgroundColor: platformTheme.sidebarColor }}
+            className="w-full md:w-64 border-r border-slate-800/80 text-slate-300 p-5 shrink-0 flex flex-col justify-between gap-6 relative select-none animate-fade-in transition-all"
+          >
             <div className="space-y-6">
               
               {/* Sidebar Header with Collapse Button */}
@@ -1074,7 +1241,6 @@ export default function App() {
                     { id: 'salidas', label: 'Salidas', icon: ArrowUpRight },
                     { id: 'movimientos', label: 'Movimientos', icon: Move },
                     { id: 'conteos', label: 'Conteos Cíclicos', icon: ClipboardCheck },
-                    { id: 'pick_pack', label: 'Pick and Pack', icon: Trello },
                   ].map((tab) => {
                     const Icon = tab.icon;
                     const isActive = activeTab === tab.id;
@@ -1082,10 +1248,14 @@ export default function App() {
                       <button
                         key={tab.id}
                         onClick={() => setActiveTab(tab.id)}
+                        style={{
+                          backgroundColor: isActive ? platformTheme.primaryColor : undefined,
+                          boxShadow: isActive ? `0 4px 14px ${platformTheme.primaryColor}35` : undefined
+                        }}
                         className={`w-full py-2.5 px-3 rounded-lg text-xs font-bold leading-none flex items-center gap-2.5 transition cursor-pointer ${
                           isActive 
-                            ? 'bg-blue-600 text-white shadow shadow-blue-600/10' 
-                            : 'hover:bg-slate-800 hover:text-slate-100'
+                            ? 'text-white' 
+                            : 'hover:bg-slate-800/80 hover:text-slate-100'
                         }`}
                       >
                         <Icon className={`h-4.5 w-4.5 ${isActive ? 'text-white' : 'text-slate-400'}`} />
@@ -1105,15 +1275,12 @@ export default function App() {
                 <div className="space-y-1">
                   {[
                     { id: 'dashboard', label: 'Métricas', icon: TrendingUp },
-                    { id: 'reports', label: 'Centro de Reportes', icon: FileDown },
-                    { id: 'negocios', label: 'Líneas de Negocio', icon: Briefcase },
                     { id: 'map', label: 'Mapa del Almacén', icon: MapPin },
-                    { id: 'crew', label: 'Registro de Personal', icon: UserCheck },
                     { id: 'inventory', label: 'Registro de SKU', icon: Package },
                     { id: 'etiquetas', label: 'Estación de Etiquetas', icon: Printer },
-                    { id: 'tarimas', label: 'Fichas de Tarimas', icon: Layers },
                     { id: 'alertas', label: 'Gestión de Alertas', icon: ShieldAlert },
-                    { id: 'manual', label: 'Manual de Usuario', icon: BookOpen },
+                    { id: 'reports', label: 'Centro de Reportes', icon: FileDown },
+                    { id: 'configuracion', label: 'Configuración', icon: Settings },
                   ].map((tab) => {
                     const Icon = tab.icon;
                     const isActive = activeTab === tab.id;
@@ -1121,9 +1288,14 @@ export default function App() {
                       <button
                         key={tab.id}
                         onClick={() => setActiveTab(tab.id)}
+                        style={{
+                          backgroundColor: isActive ? platformTheme.primaryColor : undefined,
+                          borderColor: isActive ? platformTheme.primaryColor : undefined,
+                          boxShadow: isActive ? `0 2px 8px ${platformTheme.primaryColor}30` : undefined
+                        }}
                         className={`w-full py-2 px-3 rounded-lg text-xs font-semibold leading-none flex items-center gap-2.5 transition cursor-pointer ${
                           isActive 
-                            ? 'bg-slate-800 text-white border border-slate-700/50' 
+                            ? 'text-white shadow-xs' 
                             : 'hover:bg-slate-800/50 hover:text-slate-100 text-slate-400'
                         }`}
                       >
@@ -1155,7 +1327,8 @@ export default function App() {
           /* Subtle floating tab docked on left screen edge to quickly reopen sidebar */
           <button
             onClick={toggleSidebar}
-            className="fixed left-0 top-1/2 -translate-y-1/2 z-40 bg-slate-900/95 hover:bg-blue-600 text-slate-300 hover:text-white px-2 py-4 rounded-r-2xl shadow-xl border-y border-r border-slate-700 hover:border-blue-500 transition-all flex flex-col items-center gap-1.5 cursor-pointer group"
+            style={{ backgroundColor: platformTheme.sidebarColor }}
+            className="fixed left-0 top-1/2 -translate-y-1/2 z-40 hover:opacity-95 text-slate-300 hover:text-white px-2 py-4 rounded-r-2xl shadow-xl border-y border-r border-slate-700 transition-all flex flex-col items-center gap-1.5 cursor-pointer group"
             title="Mostrar barra de opciones lateral"
             aria-label="Mostrar barra de opciones lateral"
           >
@@ -1183,7 +1356,9 @@ export default function App() {
                 </button>
                 <span className="text-slate-300 font-light">|</span>
                 <span className="text-slate-500 font-medium">Sección activa:</span>
-                <span className="font-bold text-slate-800 capitalize font-mono">{activeTab}</span>
+                <span className="font-bold text-slate-800 capitalize font-mono">
+                  {activeTab === 'configuracion' || activeTab === 'crew' || activeTab === 'manual' ? 'Configuración' : activeTab}
+                </span>
               </div>
               <span className="text-[10px] text-slate-400 hidden sm:inline font-mono">
                 Presione [Mostrar Barra] para cambiar de módulo
@@ -1243,40 +1418,7 @@ export default function App() {
             }
 
             if (!showAlertsPanel) {
-              return (
-                <div className="bg-white/95 hover:bg-white border border-slate-200 rounded-xl px-4 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 shadow-2xs transition-all">
-                  <div className="flex items-center gap-2.5">
-                    <span className="relative flex h-2 w-2">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
-                    </span>
-                    <ShieldAlert className="h-4 w-4 text-slate-500" />
-                    <span className="text-xs font-semibold text-slate-700 font-mono">
-                      Alertas de Seguridad: {visibleSystemAlerts.length} {visibleSystemAlerts.length === 1 ? 'alerta activa oculta' : 'alertas activas ocultas'}
-                    </span>
-                    {dismissedCount > 0 && (
-                      <span className="text-[10px] text-slate-400 font-mono hidden md:inline">
-                        ({dismissedCount} descartadas)
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => handleToggleAlertsPanel(true)}
-                      className="text-xs font-mono font-bold text-slate-700 hover:text-slate-900 bg-slate-50 hover:bg-slate-100 border border-slate-250 px-2.5 py-1 rounded-lg flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
-                    >
-                      <Eye className="h-3.5 w-3.5 text-blue-600" /> Mostrar panel de alertas
-                    </button>
-                    <button
-                      onClick={() => handleDismissAllVisibleAlerts(visibleSystemAlerts.map(a => a.id))}
-                      className="text-xs font-mono font-medium text-slate-500 hover:text-slate-800 px-2 py-1 rounded-lg hover:bg-slate-100 transition flex items-center gap-1 cursor-pointer"
-                      title="Descartar todas las alertas activas"
-                    >
-                      <EyeOff className="h-3 w-3" /> Descartar todas
-                    </button>
-                  </div>
-                </div>
-              );
+              return null;
             }
 
             return (
@@ -1564,75 +1706,16 @@ export default function App() {
           )}
 
           {activeTab === 'salidas' && (
-            <div className="space-y-6 animate-fadeIn">
-              <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                <div>
-                  <h2 className="text-xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
-                    <ArrowUpRight className="h-6 w-6 text-amber-600 bg-amber-50 p-1 rounded-lg" />
-                    Operación de Salidas (Outbound)
-                  </h2>
-                  <p className="text-xs text-slate-500 mt-1">
-                    Consulte pedidos de despacho pendientes y realice la validación de salida de mercancía por escáner.
-                  </p>
-                </div>
-                
-                {/* Sub-navigation pill selector */}
-                <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 shrink-0 select-none">
-                  <button
-                    onClick={() => setSalidasSubTab('orders')}
-                    className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                      salidasSubTab === 'orders'
-                        ? 'bg-white text-slate-900 shadow-sm'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    Cola de Pedidos
-                  </button>
-                  <button
-                    onClick={() => setSalidasSubTab('scan')}
-                    className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                      salidasSubTab === 'scan'
-                        ? 'bg-white text-slate-900 shadow-sm'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    Despacho por Escáner
-                  </button>
-                </div>
-              </div>
-
-              {salidasSubTab === 'orders' ? (
-                <OrdersManager
-                  orders={orders}
-                  inventory={inventory}
-                  bins={bins}
-                  onCreateOrder={handleCreateOrder}
-                  onOptimizeOrderPath={handleOptimizeOrderPath}
-                  onCompleteOrder={handleCompleteOrder}
-                />
-              ) : (
-                <div className="space-y-4">
-                  <div className="p-4 bg-amber-50/50 border border-amber-150 rounded-2xl text-xs text-amber-800 flex items-center gap-3">
-                    <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse shrink-0"></span>
-                    <p className="font-semibold">
-                      <strong>Validación e Identificación de Salidas:</strong> Escanee el código para validar registro, ver en qué celdas físicas está ubicado y conocer de qué posición óptima se sugiere extraer (Picking).
-                    </p>
-                  </div>
-                  <BarcodeConsole
-                    bins={bins}
-                    inventory={inventory}
-                    orders={orders}
-                    onFullSync={handleBarcodeConsoleSync}
-                    onLogCountSession={handleCountCycleSession}
-                    initialModule="salida"
-                    hideModuleSelector={true}
-                    hideHeader={true}
-                    onAddInventory={handleAddInventory}
-                    onNavigateToInventory={() => setActiveTab('inventory')}
-                  />
-                </div>
-              )}
-            </div>
+            <DirectDispatchManager
+              inventory={inventory}
+              bins={bins}
+              orders={orders}
+              onDirectDispatch={handleDirectDispatch}
+              onCompleteOrder={handleCompleteOrder}
+              activeOperator={activeOperator}
+              platformTheme={platformTheme}
+              onNavigateToTab={setActiveTab}
+            />
           )}
 
           {activeTab === 'conteos' && (
@@ -1648,28 +1731,54 @@ export default function App() {
                   </p>
                 </div>
                 
-                {/* Sub-navigation pill selector */}
-                <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 shrink-0 select-none">
+                {/* Actions & Sub-navigation */}
+                <div className="flex flex-wrap items-center gap-2.5">
                   <button
-                    onClick={() => setConteosSubTab('scan')}
-                    className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                      conteosSubTab === 'scan'
-                        ? 'bg-white text-slate-900 shadow-sm'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
+                    type="button"
+                    onClick={() => setShowCycleCountReportModal(true)}
+                    className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition flex items-center gap-2 shadow-xs cursor-pointer"
+                    title="Imprimir acta oficial de conteo con desglose de diferencias y sección de firmas"
                   >
-                    Efectuar Conteo
+                    <Printer className="h-4 w-4 text-emerald-400" />
+                    <span>Imprimir Reporte y Firmas</span>
                   </button>
-                  <button
-                    onClick={() => setConteosSubTab('history')}
-                    className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                      conteosSubTab === 'history'
-                        ? 'bg-white text-slate-900 shadow-sm'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    Historial de Desviaciones
-                  </button>
+
+                  <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 shrink-0 select-none">
+                    <button
+                      onClick={() => setConteosSubTab('scan')}
+                      className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        conteosSubTab === 'scan'
+                          ? 'bg-white text-slate-900 shadow-sm'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Efectuar Conteo
+                    </button>
+                    <button
+                      onClick={() => setConteosSubTab('history')}
+                      className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        conteosSubTab === 'history'
+                          ? 'bg-white text-slate-900 shadow-sm'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Historial
+                    </button>
+                    <button
+                      onClick={() => {
+                        setConteosSubTab('report');
+                        setShowCycleCountReportModal(true);
+                      }}
+                      className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                        conteosSubTab === 'report'
+                          ? 'bg-white text-emerald-700 shadow-sm'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <FileCheck className="h-3.5 w-3.5 text-emerald-600" />
+                      Reporte Oficial
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -1679,11 +1788,21 @@ export default function App() {
                   <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
                     {/* Left Column (Main Scanner Terminal) */}
                     <div className="xl:col-span-2 space-y-4">
-                      <div className="p-4 bg-emerald-50/50 border border-emerald-150 rounded-2xl text-xs text-emerald-800 flex items-center gap-3">
-                        <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
-                        <p className="font-semibold">
-                          <strong>Auditoría de Stock en Vivo:</strong> Escanee el código de barras o haga clic en un SKU de la lista de avance lateral para cargarlo y auditarlo.
-                        </p>
+                      <div className="p-4 bg-emerald-50/50 border border-emerald-150 rounded-2xl text-xs text-emerald-800 flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
+                          <p className="font-semibold">
+                            <strong>Auditoría de Stock en Vivo:</strong> Escanee el código de barras o haga clic en un SKU de la lista de avance lateral para cargarlo y auditarlo.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setShowCycleCountReportModal(true)}
+                          className="text-[11px] font-bold bg-white hover:bg-emerald-100 text-emerald-800 border border-emerald-200 px-2.5 py-1 rounded-lg transition shrink-0 cursor-pointer flex items-center gap-1.5"
+                        >
+                          <Printer className="h-3.5 w-3.5 text-emerald-600" />
+                          <span>Reporte ({activeSessionSkus.length})</span>
+                        </button>
                       </div>
                       <BarcodeConsole
                         bins={bins}
@@ -1711,13 +1830,24 @@ export default function App() {
                             </h3>
                             <p className="text-[10px] text-slate-400 mt-0.5">Avance de auditoría cíclica de SKUs</p>
                           </div>
-                          <button
-                            onClick={handleResetActiveSession}
-                            className="text-[10px] bg-slate-50 border border-slate-200 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-100 font-extrabold px-2.5 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1 shrink-0"
-                            title="Reiniciar ejercicio de conteo para comenzar una nueva sesión"
-                          >
-                            Reiniciar Sesión
-                          </button>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setShowCycleCountReportModal(true)}
+                              className="text-[10px] bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold px-2.5 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1 shrink-0 shadow-xs"
+                              title="Concluir el conteo y generar el reporte para firma"
+                            >
+                              <Printer className="h-3 w-3 text-emerald-200" />
+                              <span>Concluir</span>
+                            </button>
+                            <button
+                              onClick={handleResetActiveSession}
+                              className="text-[10px] bg-slate-50 border border-slate-200 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-100 font-extrabold px-2.5 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1 shrink-0"
+                              title="Reiniciar ejercicio de conteo para comenzar una nueva sesión"
+                            >
+                              Reiniciar
+                            </button>
+                          </div>
                         </div>
 
                         <div className="flex items-center gap-5 bg-slate-50/50 p-4 rounded-xl border border-slate-100">
@@ -1776,6 +1906,16 @@ export default function App() {
                           </div>
                         </div>
 
+                        {/* Banner to Conclude and Print Report */}
+                        <button
+                          type="button"
+                          onClick={() => setShowCycleCountReportModal(true)}
+                          className="w-full py-2.5 px-3 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-xs border border-slate-800"
+                        >
+                          <FileCheck className="h-4 w-4 text-emerald-400" />
+                          <span>Concluir Conteo y Generar Acta ({activeSessionSkus.length} SKUs)</span>
+                        </button>
+
                         {/* Search and SKU list */}
                         <div className="space-y-3">
                           <div className="flex justify-between items-center">
@@ -1831,11 +1971,23 @@ export default function App() {
                   </div>
                 ) : (
                   <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
-                    <div className="flex justify-between items-center border-b border-slate-100 pb-3">
-                      <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider font-mono">
-                        Sesiones de Conteo Cíclico y Ajustes Realizados
-                      </h3>
-                      <span className="text-[10px] font-bold text-slate-400">Orden Cronológico</span>
+                    <div className="flex flex-wrap justify-between items-center border-b border-slate-100 pb-3 gap-2">
+                      <div>
+                        <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider font-mono">
+                          Sesiones de Conteo Cíclico y Ajustes Realizados
+                        </h3>
+                        <p className="text-[10px] text-slate-400 mt-0.5">Historial inmutable de auditorías y discrepancias detectadas</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setShowCycleCountReportModal(true)}
+                          className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+                        >
+                          <Printer className="h-3.5 w-3.5 text-emerald-400" />
+                          <span>Imprimir Acta de Auditoría</span>
+                        </button>
+                      </div>
                     </div>
                     
                     {countedSessions.length === 0 ? (
@@ -1891,63 +2043,23 @@ export default function App() {
                   </div>
                 );
               })()}
-            </div>
-          )}
 
-          {activeTab === 'pick_pack' && (
-            <div className="space-y-6 animate-fadeIn">
-              <div className="bg-white p-6 rounded-2xl border border-slate-200/60 shadow-xs flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                <div>
-                  <h2 className="text-xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
-                    <Trello className="h-6 w-6 text-purple-600 bg-purple-50 p-1 rounded-lg" />
-                    Pick and Pack (Surtido y Empaque)
-                  </h2>
-                  <p className="text-xs text-slate-500 mt-1">
-                    Optimice las rutas físicas para recolectar productos en el almacén y gestione el empaque de pedidos finalizados.
-                  </p>
-                </div>
-                
-                {/* Sub-navigation pill selector */}
-                <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 shrink-0 select-none">
-                  <button
-                    onClick={() => setPickPackSubTab('picking')}
-                    className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                      pickPackSubTab === 'picking'
-                        ? 'bg-white text-slate-900 shadow-sm'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    Ruta de Picking
-                  </button>
-                  <button
-                    onClick={() => setPickPackSubTab('kanban')}
-                    className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                      pickPackSubTab === 'kanban'
-                        ? 'bg-white text-slate-900 shadow-sm'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    Tablero de Empaque
-                  </button>
-                </div>
-              </div>
-
-              {pickPackSubTab === 'picking' ? (
-                <PickingConsole
-                  bins={bins}
-                  inventory={inventory}
-                  orders={orders}
-                  activeOperatorName={activeOperator ? activeOperator.name : 'Administrador'}
-                  onFullSync={handleBarcodeConsoleSync}
-                />
-              ) : (
-                <KanbanBoard
-                  orders={orders}
-                  inventory={inventory}
-                  bins={bins}
-                  onCompleteOrder={handleCompleteOrder}
-                />
-              )}
+              {/* Cycle Count Report Modal */}
+              <CycleCountReportModal
+                isOpen={showCycleCountReportModal || conteosSubTab === 'report'}
+                onClose={() => {
+                  setShowCycleCountReportModal(false);
+                  if (conteosSubTab === 'report') {
+                    setConteosSubTab('scan');
+                  }
+                }}
+                inventory={inventory}
+                bins={bins}
+                countedSessions={countedSessions}
+                activeSessionSkus={activeSessionSkus}
+                activeOperator={activeOperator}
+                onConcludeAndArchive={handleConcludeAuditSession}
+              />
             </div>
           )}
 
@@ -1958,20 +2070,6 @@ export default function App() {
               logs={logs}
               onUpdateBins={handleUpdateBins}
               activeOperatorName={activeOperator ? `${activeOperator.name} (${activeOperator.role})` : 'Administrador de Logística'}
-            />
-          )}
-
-          {activeTab === 'tarimas' && (
-            <PalletStandardizer
-              inventory={inventory}
-            />
-          )}
-
-          {activeTab === 'crew' && (
-            <CrewManager
-              activeOperator={activeOperator}
-              onSelectOperator={handleSelectOperator}
-              platformUser={user}
             />
           )}
 
@@ -2012,16 +2110,6 @@ export default function App() {
             />
           )}
 
-          {activeTab === 'negocios' && (
-            <BusinessLinesManager
-              bins={bins}
-              inventory={inventory}
-              onUpdateInventoryItem={handleUpdateInventoryItem}
-              onAddInventory={handleAddInventory}
-              onUpdateBins={handleUpdateBins}
-            />
-          )}
-
           {activeTab === 'alertas' && (
             <AlertsManager
               inventory={inventory}
@@ -2029,8 +2117,17 @@ export default function App() {
             />
           )}
 
-          {activeTab === 'manual' && (
-            <UserManual />
+          {(activeTab === 'configuracion' || activeTab === 'crew' || activeTab === 'manual' || activeTab === 'warehouses') && (
+            <ConfigurationHub
+              theme={platformTheme}
+              onUpdateTheme={handleUpdatePlatformTheme}
+              onResetTheme={handleResetPlatformTheme}
+              activeOperator={activeOperator}
+              onSelectOperator={handleSelectOperator}
+              platformUser={user}
+              initialSection={activeTab === 'crew' ? 'crew' : activeTab === 'manual' ? 'manual' : activeTab === 'warehouses' ? 'warehouses' : 'warehouses'}
+              onNavigateToTab={setActiveTab}
+            />
           )}
 
         </main>

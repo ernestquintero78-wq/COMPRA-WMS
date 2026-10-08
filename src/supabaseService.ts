@@ -322,7 +322,11 @@ export const fetchWMSData = async () => {
       supplier: row.supplier || '',
       cost: Number(row.cost || 0),
       barcode: row.barcode || '',
-      imageUrl: row.image_url || ''
+      imageUrl: row.image_url || '',
+      superWarehouseId: row.superWarehouseId || row.super_warehouse_id,
+      superWarehouseName: row.superWarehouseName || row.super_warehouse_name,
+      warehouseId: row.warehouseId || row.warehouse_id,
+      warehouseName: row.warehouseName || row.warehouse_name
     }));
 
     const orders: Order[] = localOrd.map((row: any) => {
@@ -511,7 +515,11 @@ export const saveWMSSupabaseData = async (
       supplier: i[11] || null,
       cost: Number(i[12]),
       barcode: i[13] || null,
-      image_url: i[14] || null
+      image_url: i[14] || null,
+      superWarehouseId: i[15] || null,
+      superWarehouseName: i[16] || null,
+      warehouseId: i[17] || null,
+      warehouseName: i[18] || null
     }));
 
     if (forceLocalFallback) {

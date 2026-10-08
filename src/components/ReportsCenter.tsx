@@ -25,10 +25,12 @@ import {
   RefreshCw,
   Briefcase,
   Database,
-  ShieldCheck
+  ShieldCheck,
+  Building2
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import { Bin, InventoryItem, Order, ActivityLog, CycleCountSession } from '../types';
+import { Bin, InventoryItem, Order, ActivityLog, CycleCountSession, WarehouseSection } from '../types';
+import { getStoredWarehouseSections } from './WarehouseSectionManager';
 
 interface ReportsCenterProps {
   inventory: InventoryItem[];
@@ -96,137 +98,102 @@ export default function ReportsCenter({
     return saved ? parseInt(saved, 10) : 10;
   });
 
-  const [businessLines] = useState<{ id: string; name: string }[]>(() => {
-    const saved = localStorage.getItem('wms_custom_business_lines');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      } catch (e) {}
-    }
-    return [
-      { id: 'electro', name: 'Electrónica' },
-      { id: 'food', name: 'Alimentos y Bebidas' },
-      { id: 'fashion', name: 'Moda y Textil' },
-      { id: 'home', name: 'Hogar y Cocina' },
-      { id: 'health', name: 'Salud y Cuidado' }
-    ];
+  const [warehouseSections, setWarehouseSections] = useState<WarehouseSection[]>(() => {
+    return getStoredWarehouseSections();
   });
-  
-  const [selectedBusinessLineFilter, setSelectedBusinessLineFilter] = useState<string>('all');
 
-  // Helper to resolve the business line of an SKU
-  const getSkuBusinessLineId = (item: InventoryItem): string => {
-    const savedMapping = localStorage.getItem('wms_sku_business_lines');
+  useEffect(() => {
+    const handleUpdate = () => {
+      setWarehouseSections(getStoredWarehouseSections());
+    };
+    window.addEventListener('wms_warehouses_updated', handleUpdate);
+    return () => window.removeEventListener('wms_warehouses_updated', handleUpdate);
+  }, []);
+
+  const [selectedWarehouseFilter, setSelectedWarehouseFilter] = useState<string>('all');
+
+  // Helper to resolve the warehouse section of an SKU
+  const getSkuWarehouseSection = (item: InventoryItem): WarehouseSection => {
+    const savedMapping = localStorage.getItem('wms_sku_warehouse_sections');
     if (savedMapping) {
       try {
         const mapping = JSON.parse(savedMapping);
         if (mapping[item.sku]) {
-          return mapping[item.sku];
+          const found = warehouseSections.find(w => w.id === mapping[item.sku]);
+          if (found) return found;
         }
       } catch (e) {}
     }
     const cat = (item.category || '').toLowerCase();
-    const desc = (item.description || '').toLowerCase();
     const name = (item.name || '').toLowerCase();
 
-    if (cat.includes('electr') || name.includes('cpu') || name.includes('batt') || name.includes('sens')) return 'electro';
-    if (cat.includes('hazmat') || cat.includes('peli') || desc.includes('combust')) return 'electro';
-    if (cat.includes('aliment') || cat.includes('bebi') || desc.includes('cafeter')) return 'food';
-    if (cat.includes('ropa') || cat.includes('text') || name.includes('cable') || cat.includes('cabl')) return 'fashion';
-    if (cat.includes('hogar') || cat.includes('mueb') || cat.includes('limpi')) return 'home';
-    if (cat.includes('salud') || cat.includes('medic') || cat.includes('prot')) return 'health';
+    // Match keywords to default sections
+    if (name.includes('oxxo') || cat.includes('aliment') || cat.includes('bebi') || cat.includes('perece')) {
+      const oxxoWh = warehouseSections.find(w => w.code === 'OXXO' || w.id === 'wh-oxxo');
+      if (oxxoWh) return oxxoWh;
+    }
+    if (name.includes('construc') || name.includes('cemento') || name.includes('varilla') || cat.includes('obra')) {
+      const constWh = warehouseSections.find(w => w.code === 'CONST' || w.id === 'wh-const');
+      if (constWh) return constWh;
+    }
+    if (name.includes('transporte') || name.includes('llanta') || name.includes('filtro') || cat.includes('flota')) {
+      const transWh = warehouseSections.find(w => w.code === 'TRANS' || w.id === 'wh-trans');
+      if (transWh) return transWh;
+    }
 
-    return 'electro';
-  };
-
-  // Helper to resolve physical space / designated business line of a bin
-  const getBinDesignatedLineId = (bin: Bin): string | null => {
-    let aisleAssignments: Record<string, string> = {
-      'A': 'electro',
-      'B': 'food',
-      'C': 'fashion',
-      'D': 'home'
+    return warehouseSections[0] || {
+      id: 'wh-general',
+      code: 'GEN',
+      name: 'Almacén General',
+      sectionType: 'General',
+      facilityLocation: 'Nave Central',
+      color: '#3b82f6',
+      status: 'Activo',
+      createdAt: '',
+      subWarehouses: []
     };
-    const savedAisle = localStorage.getItem('wms_aisle_business_lines');
-    if (savedAisle) {
-      try {
-        aisleAssignments = JSON.parse(savedAisle);
-      } catch (e) {}
-    }
-
-    let binAssignments: Record<string, string> = {};
-    const savedBin = localStorage.getItem('wms_bin_business_lines');
-    if (savedBin) {
-      try {
-        binAssignments = JSON.parse(savedBin);
-      } catch (e) {}
-    }
-
-    if (binAssignments[bin.id]) {
-      return binAssignments[bin.id];
-    }
-    if (aisleAssignments[bin.aisle]) {
-      return aisleAssignments[bin.aisle];
-    }
-    return null;
   };
 
-  // Filtered Inventory dataset based on selected line of business
+  // Filtered datasets based on selected warehouse section
   const filteredInventoryByLine = React.useMemo(() => {
-    if (selectedBusinessLineFilter === 'all') return inventory;
-    return inventory.filter(item => getSkuBusinessLineId(item) === selectedBusinessLineFilter);
-  }, [inventory, selectedBusinessLineFilter]);
+    if (selectedWarehouseFilter === 'all') return inventory;
+    return inventory.filter(item => getSkuWarehouseSection(item).id === selectedWarehouseFilter);
+  }, [inventory, selectedWarehouseFilter, warehouseSections]);
 
-  // Filtered Bins dataset based on selected line of business (designated or containing an SKU of this line)
   const filteredBinsByLine = React.useMemo(() => {
-    if (selectedBusinessLineFilter === 'all') return bins;
+    if (selectedWarehouseFilter === 'all') return bins;
     return bins.filter(b => {
-      if (getBinDesignatedLineId(b) === selectedBusinessLineFilter) return true;
       if (b.occupiedSku) {
         const item = inventory.find(i => i.sku === b.occupiedSku);
-        if (item && getSkuBusinessLineId(item) === selectedBusinessLineFilter) return true;
+        if (item && getSkuWarehouseSection(item).id === selectedWarehouseFilter) return true;
       }
-      return false;
+      return true;
     });
-  }, [bins, inventory, selectedBusinessLineFilter]);
+  }, [bins, inventory, selectedWarehouseFilter, warehouseSections]);
 
-  // Filtered Orders dataset keeping only the line items of the selected line of business
   const filteredOrdersByLine = React.useMemo(() => {
-    if (selectedBusinessLineFilter === 'all') return orders;
+    if (selectedWarehouseFilter === 'all') return orders;
     return orders.map(o => {
       const lineItems = o.items.filter(item => {
         const found = inventory.find(i => i.sku === item.sku);
-        return found && getSkuBusinessLineId(found) === selectedBusinessLineFilter;
+        return found && getSkuWarehouseSection(found).id === selectedWarehouseFilter;
       });
       return {
         ...o,
         items: lineItems
       };
     }).filter(o => o.items.length > 0);
-  }, [orders, inventory, selectedBusinessLineFilter]);
+  }, [orders, inventory, selectedWarehouseFilter, warehouseSections]);
 
-  // Filtered Logs dataset keeping only records that touch an SKU or a Bin of this line of business
   const filteredLogsByLine = React.useMemo(() => {
-    if (selectedBusinessLineFilter === 'all') return logs;
+    if (selectedWarehouseFilter === 'all') return logs;
     return logs.filter(log => {
       const hasSku = filteredInventoryByLine.some(item => 
         log.details.toUpperCase().includes(item.sku.toUpperCase())
       );
-      if (hasSku) return true;
-
-      const binMatches = log.details.match(/[A-D]-\d{2}-S[12]-L[1-3]/g);
-      if (binMatches) {
-        const hasBin = binMatches.some(binId => {
-          const binObj = bins.find(b => b.id === binId);
-          return binObj && getBinDesignatedLineId(binObj) === selectedBusinessLineFilter;
-        });
-        if (hasBin) return true;
-      }
-
-      return false;
+      return hasSku;
     });
-  }, [logs, filteredInventoryByLine, bins, selectedBusinessLineFilter]);
+  }, [logs, filteredInventoryByLine, selectedWarehouseFilter]);
 
   useEffect(() => {
     const fetchRate = async () => {
@@ -322,7 +289,7 @@ export default function ReportsCenter({
         'Categoría': item.category,
         'Cantidad Actual': item.qty,
         'Stock Mínimo (Límite)': item.minQty !== undefined && item.minQty > 0 ? item.minQty : globalThreshold,
-        'Línea de Negocio': businessLines.find(l => l.id === getSkuBusinessLineId(item))?.name || 'Otro',
+        'Almacén / Sección': getSkuWarehouseSection(item).name,
         [`Costo Unitario (${currencyMode === 'original' ? '$' : currencyMode === 'mxn_to_usd' ? 'USD $' : 'MXN $'})`]: Number(convertItemCost(item.cost || 0).toFixed(2)),
         [`Valor de Inventario (${currencyMode === 'original' ? '$' : currencyMode === 'mxn_to_usd' ? 'USD $' : 'MXN $'})`]: Number(((item.qty || 0) * convertItemCost(item.cost || 0)).toFixed(2)),
         'Proveedor': item.supplier,
@@ -379,7 +346,7 @@ export default function ReportsCenter({
       { 'Propiedad / Métrica': 'Tipo de Archivo', 'Valor / Detalle': 'Respaldo General Completo (Full System Backup)' },
       { 'Propiedad / Métrica': 'Fecha de Emisión', 'Valor / Detalle': currentDate },
       { 'Propiedad / Métrica': 'Hora de Generación', 'Valor / Detalle': currentTime },
-      { 'Propiedad / Métrica': 'Línea de Negocio', 'Valor / Detalle': selectedBusinessLineFilter === 'all' ? 'Todas las Líneas' : (businessLines.find(l => l.id === selectedBusinessLineFilter)?.name || selectedBusinessLineFilter) },
+      { 'Propiedad / Métrica': 'Almacén / Sección Filtrado', 'Valor / Detalle': selectedWarehouseFilter === 'all' ? 'Todos los Almacenes' : (warehouseSections.find(w => w.id === selectedWarehouseFilter)?.name || selectedWarehouseFilter) },
       { 'Propiedad / Métrica': 'Modo de Divisa', 'Valor / Detalle': currencyMode === 'original' ? 'Moneda Original ($)' : `Convertido (1 USD = ${exchangeRate} MXN)` },
       { 'Propiedad / Métrica': 'Capital Total en Stock', 'Valor / Detalle': `${getCurrencySymbol()}${totalInventoryValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
       { 'Propiedad / Métrica': 'Total de Unidades Almacenadas', 'Valor / Detalle': totalUnits },
@@ -405,7 +372,7 @@ export default function ReportsCenter({
       'Nombre del Producto': item.name,
       'Descripción': item.description,
       'Categoría': item.category,
-      'Línea de Negocio': businessLines.find(l => l.id === getSkuBusinessLineId(item))?.name || 'Otro',
+      'Almacén / Sección': getSkuWarehouseSection(item).name,
       'Cantidad en Stock': item.qty,
       'Stock Mínimo': item.minQty !== undefined && item.minQty > 0 ? item.minQty : globalThreshold,
       'Estado Stock': item.qty <= (item.minQty !== undefined && item.minQty > 0 ? item.minQty : globalThreshold) ? 'BAJO (ALERTA)' : 'ÓPTIMO',
@@ -435,7 +402,7 @@ export default function ReportsCenter({
         'Cantidad en Celda': bin.occupiedQty,
         'Peso Máximo (kg)': bin.maxWeight,
         'Volumen Máximo (m3)': bin.maxVolume,
-        'Línea Asignada': businessLines.find(l => l.id === getBinDesignatedLineId(bin))?.name || 'General'
+        'Almacén Asignado': bin.occupiedSku ? getSkuWarehouseSection(inventory.find(i => i.sku === bin.occupiedSku) || ({} as any)).name : 'General'
       };
     });
     const wsBins = XLSX.utils.json_to_sheet(binsData);
@@ -537,24 +504,24 @@ export default function ReportsCenter({
         </div>
       )}
 
-      {/* Barra de Filtros y Configuración (Línea de Negocio + Divisa) - no-print */}
+      {/* Barra de Filtros y Configuración (Almacén / Sección + Divisa) - no-print */}
       <div className="bg-white border border-slate-200/80 rounded-2xl p-4 shadow-3xs flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 animate-fadeIn no-print" id="reports-filter-config-bar">
         
-        {/* Filtro de Línea de Negocio */}
+        {/* Filtro de Almacén / Sección */}
         <div className="flex flex-col sm:flex-row sm:items-center gap-3 w-full lg:w-auto">
           <span className="text-xs font-extrabold text-slate-500 uppercase tracking-wider font-sans flex items-center gap-1.5 shrink-0">
-            <Briefcase className="h-4 w-4 text-indigo-500" />
-            Línea de Negocio:
+            <Building2 className="h-4 w-4 text-indigo-500" />
+            Almacén / Sección:
           </span>
           <select
-            id="reports-business-line-filter"
-            value={selectedBusinessLineFilter}
-            onChange={(e) => setSelectedBusinessLineFilter(e.target.value)}
+            id="reports-warehouse-filter"
+            value={selectedWarehouseFilter}
+            onChange={(e) => setSelectedWarehouseFilter(e.target.value)}
             className="w-full sm:w-auto px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
           >
-            <option value="all">Todas las Líneas</option>
-            {businessLines.map(bl => (
-              <option key={bl.id} value={bl.id}>{bl.name}</option>
+            <option value="all">Todos los Almacenes ({warehouseSections.length})</option>
+            {warehouseSections.map(wh => (
+              <option key={wh.id} value={wh.id}>[{wh.code}] {wh.name}</option>
             ))}
           </select>
         </div>

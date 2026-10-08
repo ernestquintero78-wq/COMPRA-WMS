@@ -92,7 +92,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
           clientName: 'Baterías y Litio Monterrey',
           products: [{ sku: 'BATT-LIPO-SM', qty: 25 }],
           priority: 'Critical',
-          notes: 'Verificar sellado de seguridad en tarima plástica estándar.',
+          notes: 'Verificar sellado de seguridad en contenedor de seguridad estándar.',
           createdAt: new Date().toISOString()
         },
         {

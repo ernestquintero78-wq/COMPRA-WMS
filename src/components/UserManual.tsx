@@ -6,14 +6,12 @@ import {
   ArrowUpRight,
   Move,
   ClipboardCheck,
-  Trello,
   TrendingUp,
   FileDown,
   MapPin,
   UserCheck,
   Package,
   Printer,
-  Layers,
   Lightbulb,
   ShieldAlert,
   AlertTriangle,
@@ -23,7 +21,7 @@ import {
   Clock,
   Database,
   ChevronRight,
-  Briefcase
+  Settings
 } from 'lucide-react';
 
 interface ManualSection {
@@ -98,29 +96,30 @@ export function UserManual() {
     },
     {
       id: 'salidas',
-      title: 'Operación de Salidas (Outbound)',
+      title: 'Operación de Salidas y Despacho Rápido',
       category: 'operacion',
       icon: ArrowUpRight,
-      summary: 'Gestión de despachos para clientes, validación de órdenes pendientes de venta y liberación de andenes de carga.',
-      objective: 'Controlar, rastrear y optimizar el egreso de mercancía del almacén mediante una validación rigurosa por código de barras que erradique los errores de despacho.',
+      summary: 'Despacho directo de mercancía sin requerir creación previa de órdenes: seleccione o escanee el producto, defina el destino y medio de entrega.',
+      objective: 'Agilizar al máximo el flujo de salida y despacho de mercancías permitiendo egresos inmediatos en 3 pasos sencillos, deduciendo el stock y celdas físicas en tiempo real.',
       steps: [
         'Vaya a la pestaña "Salidas" en el menú lateral.',
-        'En "Cola de Pedidos", verá los Sales Orders (SO) de tipo Outbound creados en el sistema.',
-        'Un pedido en estado "Pending" requiere procesamiento. Haga clic en el botón "Calcular Ruta de Picking" en la tarjeta del pedido para que el sistema diseñe el trayecto óptimo dentro del almacén.',
-        'Para validar el despacho, vaya al sub-módulo "Despacho por Escáner".',
-        'Seleccione la orden correspondiente y escanee cada artículo conforme sea retirado físicamente de las celdas.',
-        'Una vez surtidas todas las unidades del pedido, se registrará el operador asignado, transportista y número de seguimiento.',
-        'Haga clic en "Finalizar Orden" para deducir permanentemente el stock en la base de datos de Supabase.'
+        'Paso 1 (Producto): Escanee el código de barras/SKU con lector o seleccione el artículo directamente desde el catálogo visual con stock disponible y celdas de picking en vivo.',
+        'Indique la cantidad a despachar utilizando los controles o botones rápidos (+1, +5, +10, Máx).',
+        'Paso 2 (Destino): Ingrese el destino, cliente o sucursal (o use los chips rápidos: Cliente Mostrador, Sucursal Norte, Envío a Domicilio, etc.).',
+        'Paso 3 (Medio de Entrega): Elija el transporte (Reparto Local, Paquetería Externa, Entrega en Mostrador, Transporte Pesado, Mensajería Express) y opcionalmente número de guía o notas.',
+        'Haga clic en el botón "PROCESAR SALIDA INMEDIATA": El sistema deducirá el stock del catálogo y de las celdas físicas automáticamente, reflejándolo en los tableros de Métricas.',
+        'Obtenga el Comprobante Digital / Vale de Salida oficial con opción a imprimir remisión y visualícelo en el historial de despachos.'
       ],
       fields: [
-        { name: 'ID de Pedido', description: 'Código único de orden, prefijado con SO (Sales Order) para salidas.' },
-        { name: 'Prioridad de Despacho', description: 'Niveles de prioridad (Low, Medium, High, Critical) que alteran la prioridad visual de la cola operativa.' },
-        { name: 'Transportista (Carrier)', description: 'Empresa logística externa encargada de la entrega final.' }
+        { name: 'Producto / SKU', description: 'Artículo a despachar con validación de stock disponible y celdas de origen para picking.' },
+        { name: 'Destino', description: 'Cliente, sucursal, tienda o punto de entrega de la mercancía.' },
+        { name: 'Medio de Entrega', description: 'Método de transporte utilizado para el traslado físico del material.' },
+        { name: 'Folio de Salida', description: 'Identificador único generado automáticamente (OUT-XXXXXX) para trazabilidad y auditoría.' }
       ],
       bestPractices: [
-        'No libere un transporte sin haber escaneado el 100% de los SKUs en el sistema; esto previene reclamos de clientes.',
-        'Organice las órdenes críticas primero para cumplir con las ventanas horarias de embarque.',
-        'Valide que el estado del pedido cambie visualmente a "Completed" en la cola.'
+        'No es necesario crear órdenes previas: el módulo procesa la salida de inmediato con solo indicar producto, destino y transporte.',
+        'Revise las celdas de extracción mostradas en la ficha del producto para tomar la mercancía de las ubicaciones físicas sugeridas.',
+        'Utilice el botón de Imprimir Vale para acompañar la entrega física con el comprobante de salida formal.'
       ]
     },
     {
@@ -164,7 +163,8 @@ export function UserManual() {
         'El sistema cargará el SKU en la consola de auditoría. Ingrese la cantidad real de piezas que ha contado físicamente en los estantes.',
         'Haga clic en el botón "Confirmar Registro de Auditoría (Firma)".',
         'Si la cantidad física difiere del stock registrado en el sistema, el WMS calculará la desviación (positiva o negativa) y actualizará automáticamente la cantidad del SKU.',
-        'Para revisar los desajustes históricos, haga clic en el botón superior de sub-navegación "Historial de Desviaciones". Verá la lista detallada con fechas, desviaciones y estatus de alineación.'
+        'Para revisar los desajustes históricos, haga clic en el botón superior de sub-navegación "Historial de Desviaciones". Verá la lista detallada con fechas, desviaciones y estatus de alineación.',
+        'Al concluir el ejercicio de conteo, haga clic en "Imprimir Reporte y Firmas" o "Concluir y Generar Acta". Podrá seleccionar la fecha del ejercicio, asignar el responsable y supervisor, y generar el Acta Oficial de Conteo Cíclico en formato imprimible con el balance exacto de diferencias y los recuadros para firma física (Responsable, Supervisor y Gerencia).'
       ],
       fields: [
         { name: 'Inventario Físico (Physical)', description: 'La cantidad real contada manualmente en el estante por el operario.' },
@@ -175,32 +175,6 @@ export function UserManual() {
         'Se recomienda realizar conteos cíclicos diariamente sobre productos de alta rotación (Clasificación A).',
         'Si encuentra una desviación negativa constante para un SKU, investigue la estación de empaque o reporte fallas en las etiquetas.',
         'Al iniciar una nueva campaña de auditoría completa, haga clic en "Reiniciar Sesión" para limpiar el gráfico de avance.'
-      ]
-    },
-    {
-      id: 'pick_pack',
-      title: 'Pick and Pack (Surtido y Empaque)',
-      category: 'operacion',
-      icon: Trello,
-      summary: 'Gestión integrada de recolección en estanterías mediante rutas 3D optimizadas y empaque de pedidos a través de un tablero Kanban interactivo.',
-      objective: 'Minimizar los tiempos de caminata de los operadores en el almacén mediante rutas de picking lógicas y controlar las fases finales de empaque previas al despacho.',
-      steps: [
-        'Vaya a la pestaña "Pick and Pack" en el menú principal.',
-        'En la sub-pestaña "Ruta de Picking", el sistema analiza la orden activa de salida de mayor prioridad.',
-        'El algoritmo generará una ruta de recolección secuenciada de celdas ordenadas (ej: Aisle A → B → C) minimizando retrocesos espaciales.',
-        'El operador puede seguir el checklist visual en pantalla, marcando cada SKU como "Surtido" conforme avanza físicamente.',
-        'Cambie a la sub-pestaña "Tablero de Empaque" para ver el flujo Kanban interactivo de pedidos.',
-        'Las columnas dividen los pedidos en: Pending (Pendientes), Picking (En surtido), Packing (En empaque) y Shipped (Enviado).',
-        'Mueva el estado de los pedidos o haga clic en los activadores de estado interactivos para avanzar los pedidos conforme completen el empaque físico en la estación de despacho.'
-      ],
-      fields: [
-        { name: 'Ruta Secuencial (Picking Path)', description: 'Trayecto óptimo generado utilizando heurísticas en zigzag por pasillos (A, B, C, D).' },
-        { name: 'Estado Kanban', description: 'Fase de proceso del pedido en tiempo real.' },
-        { name: 'Operador Asignado', description: 'Responsable técnico que recolecta físicamente el pedido.' }
-      ],
-      bestPractices: [
-        'El operador debe llevar consigo un carro de picking equipado con divisiones y bolsas de empaque etiquetadas para agilizar el proceso ("Pick to Box").',
-        'Evite cambiar manualmente el estado de un pedido en el Kanban a "Shipped" sin haber impreso la etiqueta de envío correspondiente.'
       ]
     },
     {
@@ -251,33 +225,6 @@ export function UserManual() {
       ]
     },
     {
-      id: 'negocios',
-      title: 'Líneas de Negocio (Zonificación)',
-      category: 'analisis',
-      icon: Briefcase,
-      summary: 'Configuración y zonificación del almacén por unidades de negocio o tipos de producto (ej: Electrónica, Alimentos, Moda) para organizar el espacio y optimizar el Putaway.',
-      objective: 'Lograr una segregación física ordenada de los productos asignando pasillos o celdas exclusivas a líneas de negocio específicas, evitando contaminaciones cruzadas y reduciendo tiempos de traslado.',
-      steps: [
-        'Vaya a la pestaña "Líneas de Negocio" en el menú principal.',
-        'En la parte superior, observe las tarjetas correspondientes a cada Línea de Negocio registrada (Electrónica, Alimentos, Moda, etc.) con sus estadísticas de SKU y valor acumulado.',
-        'Haga clic en cualquier tarjeta de Línea de Negocio para filtrar e inspeccionar los SKUs asociados en la tabla inferior.',
-        'Para agregar una nueva línea, pulse el botón "Crear Nueva Línea de Negocio" e ingrese el nombre, descripción y elija un color visual identificador.',
-        'En la sección de "Asignación y Zonificación Física de Espacios", designe un pasillo completo (Pasillo A, B, C, D) para una de sus líneas operativas y pulse "Designar Pasillo".',
-        'Si requiere excepciones, use la "Designación de Celdas Individuales" ingresando la coordenada de la celda específica (ej: A-01-S1-L1) para forzar su exclusividad.',
-        'En caso de querer quitar la exclusividad de una celda, busque el listado de "Excepciones Activas" abajo y haga clic en el botón de restablecer.'
-      ],
-      fields: [
-        { name: 'Línea de Negocio (Business Line)', description: 'División organizativa que agrupa productos con características afines o requerimientos de manejo similares.' },
-        { name: 'Zonificación de Pasillo (Aisle Designate)', description: 'Asignación macro de un pasillo completo a una línea de negocio, usada por el optimizador de Putaway.' },
-        { name: 'Excepciones de Celda (Overrides)', description: 'Configuraciones granulares a nivel de celda para sobreescribir la regla del pasillo general.' }
-      ],
-      bestPractices: [
-        'Agrupe siempre los productos con requerimientos de temperatura o peligrosidad en pasillos específicos y excluya otros productos para cumplir con normas de seguridad.',
-        'Utilice colores contrastantes para cada línea de negocio; esto ayuda a los operadores a identificar visualmente las áreas en el almacén físico.',
-        'Asegúrese de revisar periódicamente la ocupación y valorización por línea de negocio para redistribuir el espacio físico según la rotación de temporada.'
-      ]
-    },
-    {
       id: 'map',
       title: 'Mapa Interactivo del Almacén',
       category: 'analisis',
@@ -303,13 +250,13 @@ export function UserManual() {
     },
     {
       id: 'crew',
-      title: 'Registro de Personal y Configuración',
+      title: 'Registro de Personal (En Configuración)',
       category: 'soporte',
       icon: UserCheck,
-      summary: 'Consola de control de perfiles operativos, inicio de sesión digital rápido y preferencias de retroalimentación de notificaciones del sistema.',
+      summary: 'Consola de control de perfiles operativos, inicio de sesión digital rápido y preferencias de retroalimentación de notificaciones del sistema integrada en el módulo de Configuración.',
       objective: 'Controlar de forma centralizada los usuarios activos que operan el WMS y configurar el canal de avisos en tiempo real.',
       steps: [
-        'Vaya a la pestaña "Registro de Personal" en la barra lateral izquierda.',
+        'Vaya a la pestaña "Configuración" (última opción al fondo de la barra lateral izquierda) y seleccione la pestaña "Registro de Personal".',
         'El sistema mostrará una lista de operadores logísticos precargados (ej: Alex Mercer, Sarah Jenkins, Marcus Chen, Elena Rostova) con sus respectivos roles (Operador Putaway, Supervisor WMS, Auditor de Calidad).',
         'Haga clic en "Iniciar Sesión" sobre el operador que está utilizando el dispositivo actualmente. El perfil activo se reflejará en el encabezado general del WMS.',
         'En la parte inferior, encontrará el selector de "Canal de Notificaciones Preferido".',
@@ -354,7 +301,7 @@ export function UserManual() {
       category: 'soporte',
       icon: Printer,
       summary: 'Herramienta de maquetación y generación de etiquetas industriales para productos y ubicaciones físicas.',
-      objective: 'Generar archivos listos para impresión física con códigos de barra de alta precisión (estándares EAN-13 y Code 128) para rotular las tarimas y los productos recibidos.',
+      objective: 'Generar archivos listos para impresión física con códigos de barra de alta precisión (estándares EAN-13 y Code 128) para rotular cajas, empaques y productos recibidos.',
       steps: [
         'Vaya a la pestaña "Estación de Etiquetas" en la barra lateral.',
         'Seleccione el formato de etiqueta que desea imprimir (ej: Envío Grande de 4"x6", Estándar de Almacén de 4"x3", o Código de Producto Mediana de 3"x2").',
@@ -370,30 +317,6 @@ export function UserManual() {
       bestPractices: [
         'Verifique que su impresora térmica de etiquetas esté configurada en las mismas dimensiones físicas (pulgadas) que las seleccionadas en el sistema.',
         'Limpie regularmente el cabezal térmico de su impresora de etiquetas para evitar líneas en blanco que impidan la lectura de los códigos de barra.'
-      ]
-    },
-    {
-      id: 'tarimas',
-      title: 'Fichas de Tarimas y Cubicaje',
-      category: 'soporte',
-      icon: Layers,
-      summary: 'Módulo de estandarización de cubicaje de pallets y cálculos de apilamiento seguro para transporte y distribución.',
-      objective: 'Calcular con precisión matemática cuántas cajas de un SKU específico pueden acomodarse de forma óptima sobre una tarima estándar sin exceder los límites físicos ni comprometer la estabilidad.',
-      steps: [
-        'Vaya a la pestaña "Fichas de Tarimas" en el menú de Soporte y Monitoreo.',
-        'Seleccione el tipo de tarima que utilizará físicamente: Tarima Europea (120x80 cm) o Tarima Americana / Standard (120x100 cm).',
-        'Seleccione el SKU del catálogo que desea cubicar.',
-        'El sistema analizará las dimensiones tridimensionales del artículo y calculará de forma automática: El total de cajas por nivel/cama, el número máximo de niveles de apilamiento seguro (sin sobrepasar los 2 metros de altura o el límite de peso de la madera), y el volumen útil ocupado (m³).',
-        'El módulo presentará un gráfico interactivo tridimensional/vectorial que simula la distribución física idónea de las cajas sobre la tarima de madera.'
-      ],
-      fields: [
-        { name: 'Tipo de Pallet', description: 'Estándar físico internacional de la tarima (EUR vs. US).' },
-        { name: 'Cajas por Tarima', description: 'La cantidad total consolidada sugerida para optimizar el transporte.' },
-        { name: 'Factor de Estabilidad', description: 'Semáforo de seguridad (Verde, Amarillo, Rojo) basado en la relación base/altura para evitar volcaduras físicas.' }
-      ],
-      bestPractices: [
-        'Utilice siempre plástico estirable (emplaye) para consolidar los pallets que cuenten con más de 3 niveles de apilamiento.',
-        'Asegúrese de colocar las cajas más pesadas en la base del pallet para bajar el centro de gravedad y evitar colapsos durante el traslado con montacargas.'
       ]
     },
     {
@@ -418,6 +341,30 @@ export function UserManual() {
       bestPractices: [
         'Mantenga activas las alertas de resistencia estructural en celdas de niveles altos (L2/L3) para salvaguardar la integridad de los racks.',
         'Asigne instrucciones sumamente detalladas y llanas para que cualquier operador sepa de inmediato qué acción de contingencia tomar.'
+      ]
+    },
+    {
+      id: 'configuracion',
+      title: 'Configuración: Imagen, Colores, Personal y Manual',
+      category: 'soporte',
+      icon: Settings,
+      summary: 'Módulo central ubicado como la última opción de la barra lateral izquierda que agrupa la personalización de imagen y colores de la plataforma, el registro de personal operativo y el manual de usuarios.',
+      objective: 'Centralizar en un solo lugar la administración estética del WMS (logo, colores y branding), la gestión de operarios y turnos, y la consulta de manuales.',
+      steps: [
+        'Haga clic en la última opción de la barra lateral izquierda: "Configuración" (ubicada justo debajo de "Centro de Reportes", que es la penúltima opción).',
+        'En la parte superior de Configuración verá 3 pestañas principales: "Apariencia y Colores", "Registro de Personal", y "Manual de Usuario".',
+        'En "Apariencia y Colores": suba el logotipo o imagen corporativa (PNG, SVG, JPG), personalice el color primario y el color de fondo de la barra lateral, y guarde los cambios en tiempo real.',
+        'En "Registro de Personal": gestione miembros del equipo, roles, contraseñas PIN, catálogo de posiciones y parámetros de terminales RF.',
+        'En "Manual de Usuario": acceda al buscador general y procedimientos detallados de cada módulo del WMS.'
+      ],
+      fields: [
+        { name: 'Logotipo de Plataforma', description: 'Imagen corporativa que se renderiza en la barra superior del sistema.' },
+        { name: 'Color Primario', description: 'Color principal que tiñe los botones activos, resaltados, gráficas e indicadores.' },
+        { name: 'Color Barra Lateral', description: 'Tono oscuro o corporativo de fondo del menú de opciones.' }
+      ],
+      bestPractices: [
+        'Utilice imágenes con fondo transparente (formato PNG o SVG) para una integración visual óptima.',
+        'Seleccione un color de acento de alto contraste para garantizar que los operadores identifiquen los botones de acción inmediata en pantallas táctiles o terminales móviles.'
       ]
     }
   ];

@@ -36,7 +36,7 @@ interface PresetSize {
 
 const PRESET_SIZES: PresetSize[] = [
   { id: '10x7.5', name: '10 × 7.5 cm', desc: '4" × 3" Estándar de Almacén WMS', base: 10.0, alto: 7.5 },
-  { id: '10x15', name: '10 × 15 cm', desc: '4" × 6" Tarima / Envío Grande', base: 10.0, alto: 15.0 },
+  { id: '10x15', name: '10 × 15 cm', desc: '4" × 6" Formato Grande / Despacho', base: 10.0, alto: 15.0 },
   { id: '10x5', name: '10 × 5 cm', desc: '4" × 2" Cajas y Pasillos', base: 10.0, alto: 5.0 },
   { id: '7.5x5', name: '7.5 × 5 cm', desc: '3" × 2" Mediana para Cajas', base: 7.5, alto: 5.0 },
   { id: '5x3', name: '5 × 3 cm', desc: '2" × 1.2" Miniatura de Piezas', base: 5.0, alto: 3.0 },
@@ -332,7 +332,7 @@ export const LabelStation: React.FC<LabelStationProps> = ({ inventory }) => {
                   }`}
                 >
                   <Layers className="h-3.5 w-3.5" />
-                  <span>Tarima Completa</span>
+                  <span>Caja / Master</span>
                 </button>
               </div>
             </div>
@@ -658,7 +658,7 @@ export const LabelStation: React.FC<LabelStationProps> = ({ inventory }) => {
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-1.5 flex-wrap">
                               <span className="text-[9px] font-black tracking-widest uppercase bg-slate-900 text-white px-2 py-0.5 rounded">
-                                {labelType === 'product' ? 'PRODUCTO WMS' : 'TARIMA / CARGA'}
+                                {labelType === 'product' ? 'PRODUCTO WMS' : 'CAJA / CARGA'}
                               </span>
                               <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">
                                 {isLandscape ? 'LOGÍSTICA INBOUND' : 'INBOUND'}
@@ -919,7 +919,7 @@ export const LabelStation: React.FC<LabelStationProps> = ({ inventory }) => {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1.5px solid #000', paddingBottom: '2px', lineHeight: 1 }}>
               <div>
                 <span style={{ fontSize: '8px', fontWeight: 900, textTransform: 'uppercase', display: 'block', letterSpacing: '1px' }}>
-                  {labelType === 'product' ? 'PRODUCTO WMS' : 'TARIMA / CARGA'}
+                  {labelType === 'product' ? 'PRODUCTO WMS' : 'CAJA / CARGA'}
                 </span>
                 <span style={{ fontSize: '10px', fontWeight: 900, display: 'block', marginTop: '2px' }}>
                   SKU: {product.sku}

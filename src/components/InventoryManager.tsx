@@ -1,9 +1,41 @@
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { InventoryItem, ActivityLog, Order } from '../types';
-import { Package, Plus, Trash2, ShieldAlert, Check, Search, Filter, Printer, QrCode, Download, Sliders, X, LayoutGrid, List, Image as ImageIcon, TrendingUp, Boxes, FileSpreadsheet, Upload, FolderUp, Pencil, Camera, Ruler } from 'lucide-react';
+import { 
+  Package, 
+  Plus, 
+  Trash2, 
+  ShieldAlert, 
+  Check, 
+  Search, 
+  Filter, 
+  Printer, 
+  QrCode, 
+  Download, 
+  Sliders, 
+  X, 
+  LayoutGrid, 
+  List, 
+  Image as ImageIcon, 
+  TrendingUp, 
+  Boxes, 
+  FileSpreadsheet, 
+  Upload, 
+  FolderUp, 
+  Pencil, 
+  Camera, 
+  Ruler,
+  Building2,
+  Layers,
+  Tag,
+  Store,
+  Hammer,
+  Truck
+} from 'lucide-react';
 import QRCode from 'qrcode';
 import { motion, AnimatePresence } from 'motion/react';
+import { getStoredWarehouseSections, DEFAULT_WAREHOUSE_SECTIONS, getCategoriesForWarehouse } from './WarehouseSectionManager';
+import { WarehouseSection, SubWarehouse } from '../types';
 
 const LOGISTICS_PLACEHOLDERS = [
   {
@@ -161,23 +193,178 @@ export const InventoryManager: React.FC<InventoryProps> = ({
     localStorage.setItem('wms_security_categories', JSON.stringify(securityCategories));
   }, [securityCategories]);
 
-  const [businessLines, setBusinessLines] = useState<{ id: string; name: string }[]>(() => {
-    const saved = localStorage.getItem('wms_custom_business_lines');
-    if (saved) {
+  const [warehouseSections, setWarehouseSections] = useState<WarehouseSection[]>(() => getStoredWarehouseSections());
+
+  useEffect(() => {
+    const handleUpdate = () => {
+      setWarehouseSections(getStoredWarehouseSections());
+    };
+    window.addEventListener('wms_warehouses_updated', handleUpdate);
+    return () => window.removeEventListener('wms_warehouses_updated', handleUpdate);
+  }, []);
+
+  // Superalmacén (Sección Principal: OXXO, Construcción, Transporte) y Almacén / Subalmacén para alta de SKU
+  const [selectedSuperWarehouseId, setSelectedSuperWarehouseId] = useState<string>(() => {
+    const list = getStoredWarehouseSections();
+    return list[0]?.id || 'wh-oxxo';
+  });
+
+  const [selectedSubWarehouseId, setSelectedSubWarehouseId] = useState<string>(() => {
+    const list = getStoredWarehouseSections();
+    const firstWh = list[0];
+    return firstWh?.subWarehouses?.[0]?.id || '';
+  });
+
+  // Current active Superalmacén and its sub-warehouses
+  const currentSuperWarehouse = React.useMemo(() => {
+    return warehouseSections.find(w => w.id === selectedSuperWarehouseId) || warehouseSections[0];
+  }, [warehouseSections, selectedSuperWarehouseId]);
+
+  const availableSubWarehouses = React.useMemo(() => {
+    return currentSuperWarehouse?.subWarehouses || [];
+  }, [currentSuperWarehouse]);
+
+  // When superalmacén changes, auto-select first subalmacén and adapt category
+  const handleSuperWarehouseChange = (newSuperId: string) => {
+    setSelectedSuperWarehouseId(newSuperId);
+    const targetWh = warehouseSections.find(w => w.id === newSuperId);
+    let nextSubId = '';
+    if (targetWh && targetWh.subWarehouses && targetWh.subWarehouses.length > 0) {
+      nextSubId = targetWh.subWarehouses[0].id;
+      setSelectedSubWarehouseId(nextSubId);
+    } else {
+      setSelectedSubWarehouseId('');
+    }
+    const cats = getCategoriesForWarehouse(newSuperId, nextSubId);
+    if (cats.length > 0 && !cats.includes(category)) {
+      setCategory(cats[0]);
+    }
+  };
+
+  // When subalmacén changes, adapt category
+  const handleSubWarehouseChange = (newSubId: string) => {
+    setSelectedSubWarehouseId(newSubId);
+    const cats = getCategoriesForWarehouse(selectedSuperWarehouseId, newSubId);
+    if (cats.length > 0 && !cats.includes(category)) {
+      setCategory(cats[0]);
+    }
+  };
+
+  // Context-aware suggested categories according to the chosen Superalmacén / Almacén
+  const suggestedCategories = React.useMemo(() => {
+    const list = getCategoriesForWarehouse(selectedSuperWarehouseId, selectedSubWarehouseId);
+    if (list.length > 0) return list;
+    return ['General', 'Almacenamiento Estándar'];
+  }, [selectedSuperWarehouseId, selectedSubWarehouseId, warehouseSections]);
+
+  // Edit SKU modal warehouse and category states
+  const [editSuperWarehouseId, setEditSuperWarehouseId] = useState<string>('wh-oxxo');
+  const [editSubWarehouseId, setEditSubWarehouseId] = useState<string>('');
+  const [editNewCategoryInput, setEditNewCategoryInput] = useState<string>('');
+
+  const currentEditSuperWarehouse = React.useMemo(() => {
+    return warehouseSections.find(w => w.id === editSuperWarehouseId) || warehouseSections[0];
+  }, [warehouseSections, editSuperWarehouseId]);
+
+  const availableEditSubWarehouses = React.useMemo(() => {
+    return currentEditSuperWarehouse?.subWarehouses || [];
+  }, [currentEditSuperWarehouse]);
+
+  const editSuggestedCategories = React.useMemo(() => {
+    const list = getCategoriesForWarehouse(editSuperWarehouseId, editSubWarehouseId);
+    if (list.length > 0) return list;
+    return ['General', 'Almacenamiento Estándar'];
+  }, [editSuperWarehouseId, editSubWarehouseId, warehouseSections]);
+
+  const handleEditSuperWarehouseChange = (newSuperId: string) => {
+    setEditSuperWarehouseId(newSuperId);
+    const targetWh = warehouseSections.find(w => w.id === newSuperId);
+    let nextSubId = '';
+    if (targetWh && targetWh.subWarehouses && targetWh.subWarehouses.length > 0) {
+      nextSubId = targetWh.subWarehouses[0].id;
+      setEditSubWarehouseId(nextSubId);
+    } else {
+      setEditSubWarehouseId('');
+    }
+    const cats = getCategoriesForWarehouse(newSuperId, nextSubId);
+    if (cats.length > 0 && (!editFormFields.category || !cats.includes(editFormFields.category))) {
+      setEditFormFields(prev => ({ ...prev, category: cats[0] }));
+    }
+  };
+
+  const handleEditSubWarehouseChange = (newSubId: string) => {
+    setEditSubWarehouseId(newSubId);
+    const cats = getCategoriesForWarehouse(editSuperWarehouseId, newSubId);
+    if (cats.length > 0 && (!editFormFields.category || !cats.includes(editFormFields.category))) {
+      setEditFormFields(prev => ({ ...prev, category: cats[0] }));
+    }
+  };
+
+  // Helpers to resolve Superalmacén and Subalmacén for any SKU
+  const getSkuSuperWarehouse = (item: InventoryItem): WarehouseSection => {
+    if (item.superWarehouseId) {
+      const found = warehouseSections.find(w => w.id === item.superWarehouseId);
+      if (found) return found;
+    }
+    const savedMapping = localStorage.getItem('wms_sku_warehouse_sections');
+    if (savedMapping) {
       try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        const mapping = JSON.parse(savedMapping);
+        if (mapping[item.sku]) {
+          const found = warehouseSections.find(w => w.id === mapping[item.sku]);
+          if (found) return found;
+        }
       } catch (e) {}
     }
-    return [
-      { id: 'electro', name: 'Electrónica' },
-      { id: 'food', name: 'Alimentos y Bebidas' },
-      { id: 'fashion', name: 'Moda y Textil' },
-      { id: 'home', name: 'Hogar y Cocina' },
-      { id: 'health', name: 'Salud y Cuidado' }
-    ];
-  });
-  const [selectedBusinessLine, setSelectedBusinessLine] = useState('electro');
+    const name = (item.name || '').toLowerCase();
+    const cat = (item.category || '').toLowerCase();
+    if (name.includes('oxxo') || cat.includes('aliment') || cat.includes('bebi') || cat.includes('perece') || cat.includes('abarrot') || cat.includes('botan')) {
+      const wh = warehouseSections.find(w => w.code === 'OXXO' || w.id === 'wh-oxxo');
+      if (wh) return wh;
+    }
+    if (name.includes('construc') || name.includes('cemento') || name.includes('varilla') || name.includes('acer') || cat.includes('obra') || cat.includes('pesad')) {
+      const wh = warehouseSections.find(w => w.code === 'CONST' || w.id === 'wh-const');
+      if (wh) return wh;
+    }
+    if (name.includes('transporte') || name.includes('llanta') || name.includes('filtro') || name.includes('refacc') || name.includes('lubric') || cat.includes('flota')) {
+      const wh = warehouseSections.find(w => w.code === 'TRANS' || w.id === 'wh-trans');
+      if (wh) return wh;
+    }
+    return warehouseSections[0] || DEFAULT_WAREHOUSE_SECTIONS[0];
+  };
+
+  const getSkuSubWarehouse = (item: InventoryItem, superWh: WarehouseSection): SubWarehouse | null => {
+    if (item.warehouseId && superWh.subWarehouses) {
+      const found = superWh.subWarehouses.find(s => s.id === item.warehouseId);
+      if (found) return found;
+    }
+    const savedSubMapping = localStorage.getItem('wms_sku_subwarehouse_sections');
+    if (savedSubMapping) {
+      try {
+        const mapping = JSON.parse(savedSubMapping);
+        if (mapping[item.sku] && superWh.subWarehouses) {
+          const found = superWh.subWarehouses.find(s => s.id === mapping[item.sku]);
+          if (found) return found;
+        }
+      } catch (e) {}
+    }
+    if (superWh.subWarehouses && superWh.subWarehouses.length > 0) {
+      const cat = (item.category || '').toLowerCase();
+      const name = (item.name || '').toLowerCase();
+      const match = superWh.subWarehouses.find(s => {
+        const sName = s.name.toLowerCase();
+        return cat.split(' ').some(w => w.length > 3 && sName.includes(w)) ||
+               name.split(' ').some(w => w.length > 3 && sName.includes(w));
+      });
+      if (match) return match;
+      return superWh.subWarehouses[0];
+    }
+    return null;
+  };
+
+  // Catalog filtering states by Superalmacén and Subalmacén
+  const [superWarehouseFilter, setSuperWarehouseFilter] = useState<string>('ALL');
+  const [subWarehouseFilter, setSubWarehouseFilter] = useState<string>('ALL');
 
   const [minQty, setMinQty] = useState(20);
   const [expiry, setExpiry] = useState('');
@@ -566,15 +753,23 @@ export const InventoryManager: React.FC<InventoryProps> = ({
 
     // Check duplicate SKU
     if (inventory.some(i => i.sku.toLowerCase() === sku.toLowerCase())) {
-      alert("Error: SKU already registered on WMS inventory index!");
+      alert("Error: ¡El código SKU ya se encuentra registrado en el catálogo del WMS!");
       return;
+    }
+
+    const selectedSuperWh = warehouseSections.find(w => w.id === selectedSuperWarehouseId) || warehouseSections[0];
+    const selectedSubWh = selectedSuperWh?.subWarehouses?.find(s => s.id === selectedSubWarehouseId);
+
+    const finalCategory = category.trim() || suggestedCategories[0] || 'General';
+    if (finalCategory && !securityCategories.includes(finalCategory)) {
+      setSecurityCategories(prev => [...prev, finalCategory]);
     }
 
     const newItem: InventoryItem = {
       sku: sku.toUpperCase().trim(),
-      name,
-      description,
-      category,
+      name: name.trim(),
+      description: description.trim(),
+      category: finalCategory,
       qty: initialQty,
       minQty,
       expirationDate: expiry,
@@ -582,29 +777,40 @@ export const InventoryManager: React.FC<InventoryProps> = ({
       unitHeight: height,
       unitLength: length,
       unitWeight: weight,
-      supplier,
+      supplier: supplier.trim(),
       cost,
       barcode: barcode.trim() || `750${Math.floor(1000000000 + Math.random() * 9000000000)}`,
-      imageUrl: imageUrl.trim()
+      imageUrl: imageUrl.trim(),
+      superWarehouseId: selectedSuperWh?.id,
+      superWarehouseName: selectedSuperWh?.name,
+      warehouseId: selectedSubWh?.id,
+      warehouseName: selectedSubWh?.name
     };
 
     try {
       await onAddInventory(newItem);
-      // Save associated business line to localStorage
-      const savedMapping = localStorage.getItem('wms_sku_business_lines') || '{}';
+      // Save associated warehouse section and subwarehouse to localStorage
       try {
-        const mapping = JSON.parse(savedMapping);
-        mapping[newItem.sku] = selectedBusinessLine;
-        localStorage.setItem('wms_sku_business_lines', JSON.stringify(mapping));
+        const savedMapping = JSON.parse(localStorage.getItem('wms_sku_warehouse_sections') || '{}');
+        savedMapping[newItem.sku] = selectedSuperWh?.id;
+        localStorage.setItem('wms_sku_warehouse_sections', JSON.stringify(savedMapping));
+
+        if (selectedSubWh?.id) {
+          const savedSubMapping = JSON.parse(localStorage.getItem('wms_sku_subwarehouse_sections') || '{}');
+          savedSubMapping[newItem.sku] = selectedSubWh.id;
+          localStorage.setItem('wms_sku_subwarehouse_sections', JSON.stringify(savedSubMapping));
+        }
       } catch (e) {}
 
       // Make new SKU the first option to fill and inspect in the platform
       setLastRegisteredSku(newItem.sku);
       localStorage.setItem('wms_last_registered_sku', newItem.sku);
 
-      // Reset search filter so the newly registered SKU is clearly visible at the top
+      // Reset search and warehouse filters so the newly registered SKU is clearly visible at the top
       setSearchQuery('');
       setCategoryFilter('Todas');
+      setSuperWarehouseFilter('ALL');
+      setSubWarehouseFilter('ALL');
 
       setShowForm(false);
       resetForm();
@@ -615,10 +821,14 @@ export const InventoryManager: React.FC<InventoryProps> = ({
 
   useEffect(() => {
     if (editingSkuItem) {
+      const superWh = getSkuSuperWarehouse(editingSkuItem);
+      const subWh = getSkuSubWarehouse(editingSkuItem, superWh);
+      setEditSuperWarehouseId(superWh.id);
+      setEditSubWarehouseId(subWh ? subWh.id : '');
       setEditFormFields({
         name: editingSkuItem.name || '',
         description: editingSkuItem.description || '',
-        category: editingSkuItem.category || (securityCategories[0] || 'Electrónicos (Frágil)'),
+        category: editingSkuItem.category || (securityCategories[0] || 'Abarrotes y Secos'),
         minQty: editingSkuItem.minQty || 10,
         cost: editingSkuItem.cost ?? 0,
         supplier: editingSkuItem.supplier || '',
@@ -628,7 +838,11 @@ export const InventoryManager: React.FC<InventoryProps> = ({
         unitLength: editingSkuItem.unitLength ?? 20,
         unitWeight: editingSkuItem.unitWeight ?? 1.0,
         barcode: editingSkuItem.barcode || '',
-        imageUrl: editingSkuItem.imageUrl || ''
+        imageUrl: editingSkuItem.imageUrl || '',
+        superWarehouseId: superWh.id,
+        superWarehouseName: superWh.name,
+        warehouseId: subWh?.id,
+        warehouseName: subWh?.name
       });
       setEditImageFileName('');
       setEditImageInputMode(editingSkuItem.imageUrl && !editingSkuItem.imageUrl.startsWith('data:') ? 'url' : 'upload');
@@ -639,7 +853,13 @@ export const InventoryManager: React.FC<InventoryProps> = ({
     setSku('');
     setName('');
     setDescription('');
-    setCategory(securityCategories[0] || 'Electrónicos (Frágil)');
+    const list = getStoredWarehouseSections();
+    const defaultSuper = list[0]?.id || 'wh-oxxo';
+    const defaultSub = list[0]?.subWarehouses?.[0]?.id || '';
+    setSelectedSuperWarehouseId(defaultSuper);
+    setSelectedSubWarehouseId(defaultSub);
+    const initialCats = getCategoriesForWarehouse(defaultSuper, defaultSub);
+    setCategory(initialCats[0] || securityCategories[0] || 'Abarrotes y Secos');
     setMinQty(20);
     setExpiry('');
     setWidth(30);
@@ -676,6 +896,8 @@ export const InventoryManager: React.FC<InventoryProps> = ({
       'SKU',
       'Nombre',
       'Código de Barras',
+      'Superalmacén',
+      'Almacén / Subalmacén',
       'Categoría',
       'Stock Actual',
       'Umbral Stock Mínimo',
@@ -688,20 +910,26 @@ export const InventoryManager: React.FC<InventoryProps> = ({
     ];
 
     // Map data to rows
-    const rows = itemsToExport.map(item => [
-      item.sku,
-      item.name,
-      item.barcode || '',
-      item.category,
-      item.qty,
-      item.minQty,
-      item.cost !== undefined ? item.cost : '',
-      item.unitWeight,
-      `${item.unitWidth}x${item.unitHeight}x${item.unitLength}`,
-      item.supplier || '',
-      item.expirationDate || '',
-      item.description || ''
-    ]);
+    const rows = itemsToExport.map(item => {
+      const superWh = getSkuSuperWarehouse(item);
+      const subWh = getSkuSubWarehouse(item, superWh);
+      return [
+        item.sku,
+        item.name,
+        item.barcode || '',
+        superWh.name,
+        subWh ? subWh.name : 'General',
+        item.category,
+        item.qty,
+        item.minQty,
+        item.cost !== undefined ? item.cost : '',
+        item.unitWeight,
+        `${item.unitWidth}x${item.unitHeight}x${item.unitLength}`,
+        item.supplier || '',
+        item.expirationDate || '',
+        item.description || ''
+      ];
+    });
 
     // Create Excel worksheet and workbook
     const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
@@ -715,13 +943,25 @@ export const InventoryManager: React.FC<InventoryProps> = ({
   // Filter items safely and in real-time
   const filteredProducts = inventory.filter(item => {
     const q = searchQuery.toLowerCase().trim();
+    const superWh = getSkuSuperWarehouse(item);
+    const subWh = getSkuSubWarehouse(item, superWh);
+
     const matchesSearch = 
+      !q ||
       (item.sku || '').toLowerCase().includes(q) || 
       (item.name || '').toLowerCase().includes(q) ||
       (item.description || '').toLowerCase().includes(q) ||
-      (item.barcode || '').toLowerCase().includes(q);
+      (item.barcode || '').toLowerCase().includes(q) ||
+      (item.category || '').toLowerCase().includes(q) ||
+      superWh.name.toLowerCase().includes(q) ||
+      superWh.code.toLowerCase().includes(q) ||
+      (subWh ? subWh.name.toLowerCase().includes(q) || subWh.code.toLowerCase().includes(q) : false);
+
     const matchesCategory = categoryFilter === 'Todas' || item.category === categoryFilter;
-    return matchesSearch && matchesCategory;
+    const matchesSuperWh = superWarehouseFilter === 'ALL' || superWh.id === superWarehouseFilter;
+    const matchesSubWh = subWarehouseFilter === 'ALL' || (subWh && subWh.id === subWarehouseFilter);
+
+    return matchesSearch && matchesCategory && matchesSuperWh && matchesSubWh;
   });
 
   const allAvailableCategories = Array.from(new Set([...securityCategories, ...inventory.map(i => i.category)]));
@@ -823,100 +1063,262 @@ export const InventoryManager: React.FC<InventoryProps> = ({
               />
             </div>
 
-            {/* Fila 2: Categoría, Línea de Negocio, Umbral de Reorden y Fecha de Expiración */}
-            <div className="col-span-12 md:col-span-3">
-              <div className="flex justify-between items-center mb-1.5">
-                <label className="block text-[10px] uppercase font-bold text-slate-400 tracking-wider">Categoría de Seguridad</label>
-                <button
-                  type="button"
-                  onClick={() => setShowCategoryManager(!showCategoryManager)}
-                  className="text-[10px] text-indigo-600 hover:text-indigo-800 font-bold flex items-center gap-1 cursor-pointer transition"
-                >
-                  {showCategoryManager ? '✕ Ocultar' : '⚙️ Editar'}
-                </button>
+            {/* SECCIÓN PRINCIPAL: ASIGNACIÓN DE SUPERALMACÉN, ALMACÉN Y CATEGORÍA */}
+            <div className="col-span-12 bg-gradient-to-r from-slate-50 via-indigo-50/20 to-blue-50/20 p-4.5 rounded-2xl border border-indigo-200/70 space-y-3.5 shadow-2xs">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-indigo-150/70 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div 
+                    className="p-2 rounded-xl text-white shadow-2xs transition-colors shrink-0"
+                    style={{ backgroundColor: currentSuperWarehouse?.color || '#3b82f6' }}
+                  >
+                    <Building2 className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <span className="text-xs font-black uppercase text-slate-800 tracking-wider flex items-center gap-2">
+                      <span>Asignación de Superalmacén, Almacén y Categoría</span>
+                    </span>
+                    <span className="block text-[10px] text-slate-500">
+                      Indique el Superalmacén, seleccione su Almacén/Subalmacén y asigne la categoría donde debe aparecer el SKU.
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1.5 self-start sm:self-auto">
+                  <span 
+                    className="px-2.5 py-1 rounded-lg text-[10px] font-black uppercase text-white font-mono shadow-2xs"
+                    style={{ backgroundColor: currentSuperWarehouse?.color || '#3b82f6' }}
+                  >
+                    [{currentSuperWarehouse?.code}] {currentSuperWarehouse?.sectionType}
+                  </span>
+                </div>
               </div>
 
-              {showCategoryManager && (
-                <div className="bg-slate-50 border border-slate-200 p-3 rounded-xl space-y-2 mb-2 animate-fade-in absolute z-50 shadow-lg max-w-xs">
-                  <span className="block text-[9px] font-bold uppercase text-slate-400">Categorías de Seguridad Actuales:</span>
-                  <div className="flex flex-wrap gap-1 bg-white p-2 rounded-lg border border-slate-100 max-h-24 overflow-y-auto">
-                    {securityCategories.map((cat) => (
-                      <div key={cat} className="inline-flex items-center gap-1 bg-slate-50 hover:bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md text-[10px] font-semibold border border-slate-200 transition">
-                        <span>{cat}</span>
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-3.5">
+                {/* 1. Superalmacén */}
+                <div className="col-span-12 md:col-span-4">
+                  <label className="block text-[10px] uppercase font-bold text-slate-600 mb-1.5 tracking-wider flex items-center gap-1">
+                    <Building2 className="h-3.5 w-3.5 text-indigo-600" />
+                    <span>Superalmacén (Sección Principal) *</span>
+                  </label>
+                  <select
+                    value={selectedSuperWarehouseId}
+                    onChange={(e) => handleSuperWarehouseChange(e.target.value)}
+                    className="w-full text-xs font-bold rounded-xl border border-indigo-200 bg-white p-2.5 text-slate-800 focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600 shadow-2xs transition"
+                  >
+                    {warehouseSections.map((wh) => (
+                      <option key={wh.id} value={wh.id}>
+                        [{wh.code}] {wh.name}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="text-[10px] text-slate-400 block mt-1 truncate">
+                    📍 {currentSuperWarehouse?.facilityLocation}
+                  </span>
+                </div>
+
+                {/* 2. Almacén / Subalmacén */}
+                <div className="col-span-12 md:col-span-4">
+                  <label className="block text-[10px] uppercase font-bold text-slate-600 mb-1.5 tracking-wider flex items-center gap-1">
+                    <Layers className="h-3.5 w-3.5 text-indigo-600" />
+                    <span>Almacén / Subalmacén Específico *</span>
+                  </label>
+                  <select
+                    value={selectedSubWarehouseId}
+                    onChange={(e) => handleSubWarehouseChange(e.target.value)}
+                    className="w-full text-xs font-bold rounded-xl border border-indigo-200 bg-white p-2.5 text-slate-800 focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600 shadow-2xs transition"
+                  >
+                    {availableSubWarehouses.length === 0 ? (
+                      <option value="">(Sin subalmacenes - Almacén General)</option>
+                    ) : (
+                      availableSubWarehouses.map((sub) => (
+                        <option key={sub.id} value={sub.id}>
+                          [{sub.code}] {sub.name} ({sub.storageType})
+                        </option>
+                      ))
+                    )}
+                  </select>
+                  <span className="text-[10px] text-slate-400 block mt-1 truncate">
+                    {availableSubWarehouses.find(s => s.id === selectedSubWarehouseId)?.locationArea || 'Área asignada al subalmacén'}
+                  </span>
+                </div>
+
+                {/* 3. Categoría donde debe aparecer / ir */}
+                <div className="col-span-12 md:col-span-4">
+                  <div className="flex justify-between items-center mb-1.5">
+                    <label className="block text-[10px] uppercase font-bold text-slate-600 tracking-wider flex items-center gap-1">
+                      <Tag className="h-3.5 w-3.5 text-indigo-600" />
+                      <span>Categoría donde Debe Aparecer *</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setShowCategoryManager(!showCategoryManager)}
+                      className="text-[10px] text-indigo-600 hover:text-indigo-800 font-bold flex items-center gap-1 cursor-pointer transition"
+                    >
+                      {showCategoryManager ? '✕ Cerrar' : '⚙️ Gestionar'}
+                    </button>
+                  </div>
+
+                  {showCategoryManager && (
+                    <div className="bg-slate-50 border border-slate-250 p-3 rounded-xl space-y-2 mb-2 animate-fade-in absolute z-50 shadow-xl max-w-xs">
+                      <span className="block text-[9px] font-bold uppercase text-slate-400">Catálogo de Categorías:</span>
+                      <div className="flex flex-wrap gap-1 bg-white p-2 rounded-lg border border-slate-100 max-h-24 overflow-y-auto">
+                        {securityCategories.map((cat) => (
+                          <div key={cat} className="inline-flex items-center gap-1 bg-slate-50 hover:bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md text-[10px] font-semibold border border-slate-200 transition">
+                            <span>{cat}</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const updated = securityCategories.filter(c => c !== cat);
+                                setSecurityCategories(updated);
+                                if (category === cat) {
+                                  setCategory(updated[0] || '');
+                                }
+                              }}
+                              className="text-red-500 hover:text-red-700 font-bold ml-1 cursor-pointer"
+                              title="Eliminar esta categoría"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      
+                      <div className="flex gap-1">
+                        <input
+                          type="text"
+                          value={newCategoryInput}
+                          onChange={(e) => setNewCategoryInput(e.target.value)}
+                          placeholder="Nueva categoría..."
+                          className="grow text-[11px] font-semibold border border-slate-200 bg-white px-2 py-1 rounded-lg text-slate-700 focus:outline-none focus:border-indigo-500"
+                        />
                         <button
                           type="button"
                           onClick={() => {
-                            const updated = securityCategories.filter(c => c !== cat);
-                            setSecurityCategories(updated);
-                            if (category === cat) {
-                              setCategory(updated[0] || '');
+                            const trimmed = newCategoryInput.trim();
+                            if (trimmed) {
+                              if (!securityCategories.includes(trimmed)) {
+                                setSecurityCategories([...securityCategories, trimmed]);
+                                setCategory(trimmed);
+                                setNewCategoryInput('');
+                              }
                             }
                           }}
-                          className="text-red-500 hover:text-red-700 font-bold ml-1 cursor-pointer"
-                          title="Eliminar esta categoría"
+                          className="bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-bold px-3 py-1 rounded-lg shadow-xs transition cursor-pointer"
                         >
-                          ✕
+                          Añadir
                         </button>
                       </div>
-                    ))}
-                    {securityCategories.length === 0 && (
-                      <span className="text-[10px] text-slate-400 italic">No hay categorías cargadas</span>
-                    )}
-                  </div>
-                  
-                  <div className="flex gap-1">
+                    </div>
+                  )}
+
+                  <select
+                    value={category}
+                    onChange={(e) => setCategory(e.target.value)}
+                    className="w-full text-xs font-bold rounded-xl border border-indigo-200 bg-white p-2.5 text-slate-800 focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600 shadow-2xs transition"
+                  >
+                    <optgroup label={`Recomendadas para ${currentSuperWarehouse?.name || 'este almacén'}`}>
+                      {suggestedCategories.map(cat => (
+                        <option key={`sug-${cat}`} value={cat}>{cat}</option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Otras Categorías del Sistema">
+                      {securityCategories.filter(c => !suggestedCategories.includes(c)).map(cat => (
+                        <option key={`oth-${cat}`} value={cat}>{cat}</option>
+                      ))}
+                    </optgroup>
+                  </select>
+
+                  <div className="mt-1.5 flex items-center gap-1.5">
                     <input
                       type="text"
                       value={newCategoryInput}
                       onChange={(e) => setNewCategoryInput(e.target.value)}
-                      placeholder="Nueva categoría..."
-                      className="grow text-[11px] font-semibold border border-slate-200 bg-white px-2 py-1 rounded-lg text-slate-700 focus:outline-none focus:border-indigo-500"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const trimmed = newCategoryInput.trim();
-                        if (trimmed) {
-                          if (!securityCategories.includes(trimmed)) {
-                            setSecurityCategories([...securityCategories, trimmed]);
-                            setCategory(trimmed);
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          const t = newCategoryInput.trim();
+                          if (t) {
+                            if (!securityCategories.includes(t)) {
+                              setSecurityCategories(prev => [...prev, t]);
+                            }
+                            setCategory(t);
                             setNewCategoryInput('');
                           }
                         }
                       }}
-                      className="bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-bold px-3 py-1 rounded-lg shadow-xs transition cursor-pointer"
+                      placeholder="+ Escribir otra categoría y Enter..."
+                      className="grow text-[10px] font-semibold border border-indigo-150 bg-white px-2 py-1 rounded-lg text-slate-700 focus:outline-none focus:border-indigo-500 placeholder:text-slate-400"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const t = newCategoryInput.trim();
+                        if (t) {
+                          if (!securityCategories.includes(t)) {
+                            setSecurityCategories(prev => [...prev, t]);
+                          }
+                          setCategory(t);
+                          setNewCategoryInput('');
+                        }
+                      }}
+                      className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-bold rounded-lg transition cursor-pointer shrink-0"
                     >
-                      Añadir
+                      Asignar
                     </button>
                   </div>
                 </div>
-              )}
+              </div>
 
-              <select
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
-                className="w-full text-xs font-semibold rounded-lg border border-slate-200 bg-white p-2.5 text-slate-700 focus:border-blue-500 focus:outline-none text-left cursor-pointer transition hover:border-slate-300"
-              >
-                {securityCategories.map((cat) => (
-                  <option key={cat} value={cat}>{cat}</option>
-                ))}
-              </select>
+              {/* Categorías recomendadas en 1 clic para este Superalmacén / Almacén */}
+              <div className="pt-2.5 border-t border-indigo-150/70 space-y-2">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                  <span className="text-[10px] font-bold uppercase font-mono text-slate-600 flex items-center gap-1">
+                    <span>⚡ Categorías disponibles para [{currentSuperWarehouse?.code}] (Asignar en 1 clic):</span>
+                  </span>
+                  <span className="text-[9.5px] text-indigo-600 font-semibold">
+                    Haga clic para seleccionar directamente la categoría donde debe ir el producto
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap gap-1.5">
+                  {suggestedCategories.map((sugCat) => {
+                    const isSelected = category.toLowerCase() === sugCat.toLowerCase();
+                    return (
+                      <button
+                        key={sugCat}
+                        type="button"
+                        onClick={() => setCategory(sugCat)}
+                        className={`px-2.5 py-1 rounded-lg text-[10.5px] font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                          isSelected
+                            ? 'bg-indigo-600 text-white shadow-xs scale-102 ring-2 ring-indigo-200'
+                            : 'bg-white hover:bg-indigo-50 text-slate-700 hover:text-indigo-800 border border-slate-250 hover:border-indigo-300'
+                        }`}
+                      >
+                        <span>{sugCat}</span>
+                        {isSelected && <Check className="h-3 w-3 text-white" />}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Confirmación en vivo de ruta y categoría */}
+                <div className="bg-white/95 p-2 rounded-xl border border-indigo-200 text-[10.5px] text-slate-700 flex items-center justify-between gap-2 shadow-2xs">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="font-bold text-slate-500 uppercase font-mono text-[9.5px]">Destino Clasificado:</span>
+                    <span className="font-black text-indigo-700">[{currentSuperWarehouse?.code}] {currentSuperWarehouse?.name}</span>
+                    <span className="text-slate-400">›</span>
+                    <span className="font-bold text-slate-800">{availableSubWarehouses.find(s => s.id === selectedSubWarehouseId)?.name || 'Almacén General'}</span>
+                    <span className="text-slate-400">›</span>
+                    <span className="px-2 py-0.5 rounded-md font-black text-white bg-indigo-600 text-[10px] shadow-2xs">
+                      Categoría: {category || 'Sin asignar'}
+                    </span>
+                  </div>
+                </div>
+              </div>
             </div>
 
-            <div className="col-span-12 md:col-span-3">
-              <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1.5 tracking-wider">Línea de Negocio</label>
-              <select
-                value={selectedBusinessLine}
-                onChange={(e) => setSelectedBusinessLine(e.target.value)}
-                className="w-full text-xs font-semibold rounded-lg border border-slate-200 bg-white p-2.5 text-slate-700 focus:border-blue-500 focus:outline-none text-left cursor-pointer transition hover:border-slate-300"
-              >
-                {businessLines.map((line) => (
-                  <option key={line.id} value={line.id}>{line.name}</option>
-                ))}
-              </select>
-            </div>
-
-            <div className="col-span-12 md:col-span-3">
+            {/* Fila: Umbral de Reorden y Fecha de Expiración */}
+            <div className="col-span-12 md:col-span-6">
               <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1.5 tracking-wider">Umbral de Reorden (Mínimo)</label>
               <input
                 type="number"
@@ -928,7 +1330,7 @@ export const InventoryManager: React.FC<InventoryProps> = ({
               />
             </div>
 
-            <div className="col-span-12 md:col-span-3">
+            <div className="col-span-12 md:col-span-6">
               <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1.5 tracking-wider">Fecha de Expiración (Opcional)</label>
               <input
                 type="date"
@@ -1300,17 +1702,60 @@ export const InventoryManager: React.FC<InventoryProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-            {/* Dropdown Selector - highly useful for small screens */}
-            <div className="flex items-center gap-2">
-              <Filter className="h-4 w-4 text-indigo-500" />
+            {/* Filtro por Superalmacén */}
+            <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-2.5 py-1.5 rounded-lg text-xs font-semibold">
+              <Building2 className="h-3.5 w-3.5 text-indigo-500 shrink-0" />
+              <select
+                value={superWarehouseFilter}
+                onChange={(e) => {
+                  setSuperWarehouseFilter(e.target.value);
+                  setSubWarehouseFilter('ALL');
+                }}
+                className="text-xs font-bold text-slate-700 bg-transparent border-none focus:ring-0 focus:outline-none cursor-pointer"
+                title="Filtrar por Superalmacén (OXXO, Construcción, Transporte)"
+              >
+                <option value="ALL">Superalmacén: Todos ({warehouseSections.length})</option>
+                {warehouseSections.map((wh) => (
+                  <option key={wh.id} value={wh.id}>
+                    [{wh.code}] {wh.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Filtro por Almacén / Subalmacén */}
+            <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-2.5 py-1.5 rounded-lg text-xs font-semibold">
+              <Layers className="h-3.5 w-3.5 text-indigo-500 shrink-0" />
+              <select
+                value={subWarehouseFilter}
+                onChange={(e) => setSubWarehouseFilter(e.target.value)}
+                className="text-xs font-bold text-slate-700 bg-transparent border-none focus:ring-0 focus:outline-none cursor-pointer"
+                title="Filtrar por Almacén / Subalmacén específico"
+              >
+                <option value="ALL">Almacén: Todos</option>
+                {(superWarehouseFilter === 'ALL'
+                  ? warehouseSections.flatMap(w => w.subWarehouses || [])
+                  : (warehouseSections.find(w => w.id === superWarehouseFilter)?.subWarehouses || [])
+                ).map((sub) => (
+                  <option key={sub.id} value={sub.id}>
+                    [{sub.code}] {sub.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Selector de Categoría */}
+            <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-2.5 py-1.5 rounded-lg text-xs font-semibold">
+              <Tag className="h-3.5 w-3.5 text-indigo-500 shrink-0" />
               <select
                 value={categoryFilter}
                 onChange={(e) => setCategoryFilter(e.target.value)}
-                className="text-xs font-semibold rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500"
+                className="text-xs font-bold text-slate-700 bg-transparent border-none focus:ring-0 focus:outline-none cursor-pointer"
+                title="Filtrar por Categoría"
               >
                 {categories.map((c) => (
                   <option key={c} value={c}>
-                    Category: {c}
+                    Categoría: {c}
                   </option>
                 ))}
               </select>
@@ -1485,7 +1930,8 @@ export const InventoryManager: React.FC<InventoryProps> = ({
                 <tr className="border-b border-slate-100 text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono">
                   <th className="pb-3 text-left">SKU CODE / BRAND DETAILS</th>
                   <th className="pb-3 text-center">CÓDIGO DE BARRAS</th>
-                  <th className="pb-3 text-center">SAFETY CATEGORY</th>
+                  <th className="pb-3 text-left">SUPERALMACÉN / ALMACÉN</th>
+                  <th className="pb-3 text-center">CATEGORÍA ASIGNADA</th>
                   <th className="pb-3 text-center">UNIT COST</th>
                   <th className="pb-3 text-center">CURRENT WAREHOUSE STOCK</th>
                   <th className="pb-3 text-center">PHYSICAL LOAD PRESETS</th>
@@ -1498,6 +1944,8 @@ export const InventoryManager: React.FC<InventoryProps> = ({
                   const isReplenishing = item.qty <= item.minQty;
                   const isLowStock = item.qty < (item.minQty || 0);
                   const isOutOfStock = item.qty === 0;
+                  const superWh = getSkuSuperWarehouse(item);
+                  const subWh = getSkuSubWarehouse(item, superWh);
                   return (
                     <tr key={item.sku} className={`hover:bg-slate-50/50 transition-colors ${
                       isOutOfStock 
@@ -1563,13 +2011,29 @@ export const InventoryManager: React.FC<InventoryProps> = ({
                         </span>
                       </td>
 
-                      {/* Safety Category */}
+                      {/* Superalmacén / Almacén Column */}
+                      <td className="py-4 text-left">
+                        <div className="space-y-1">
+                          <span 
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-black uppercase text-white font-mono shadow-2xs"
+                            style={{ backgroundColor: superWh.color || '#4f46e5' }}
+                            title={`Superalmacén: ${superWh.name}`}
+                          >
+                            <Building2 className="h-2.5 w-2.5" />
+                            <span>[{superWh.code}] {superWh.sectionType}</span>
+                          </span>
+                          <div className="text-[10px] font-bold text-slate-700 flex items-center gap-1">
+                            <Layers className="h-3 w-3 text-indigo-500 shrink-0" />
+                            <span className="truncate max-w-[160px]" title={subWh?.name || 'Almacén General'}>
+                              {subWh ? subWh.name : 'Almacén General'}
+                            </span>
+                          </div>
+                        </div>
+                      </td>
+
+                      {/* Safety Category Column */}
                       <td className="py-4 text-center">
-                        <span className={`inline-flex px-2 py-0.5 rounded-md text-[9px] font-bold border ${
-                          item.category === 'Hazmat' ? 'bg-amber-50 border-amber-200 text-amber-700 font-semibold' :
-                          item.category === 'Electronics' ? 'bg-blue-50 border-blue-200 text-blue-700' :
-                          'bg-slate-50 border-slate-200 text-slate-600'
-                        }`}>
+                        <span className="inline-flex px-2 py-0.5 rounded-md text-[9.5px] font-bold border bg-indigo-50/80 border-indigo-200 text-indigo-800 shadow-2xs">
                           {item.category}
                         </span>
                       </td>
@@ -1893,10 +2357,25 @@ export const InventoryManager: React.FC<InventoryProps> = ({
                         </button>
                       )}
                       
-                      {/* Category Pill */}
-                      <span className="absolute top-2.5 left-2.5 bg-slate-900/85 backdrop-blur-xs text-white text-[9px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wider select-none">
-                        {item.category}
-                      </span>
+                      {/* Category & Superwarehouse Pill */}
+                      {(() => {
+                        const superWh = getSkuSuperWarehouse(item);
+                        return (
+                          <div className="absolute top-2.5 left-2.5 flex items-center gap-1 z-10">
+                            <span 
+                              className="text-white text-[9px] font-black px-2 py-0.5 rounded-md uppercase font-mono shadow-xs flex items-center gap-1"
+                              style={{ backgroundColor: superWh.color || '#1e293b' }}
+                              title={`Superalmacén: ${superWh.name}`}
+                            >
+                              <Building2 className="h-2.5 w-2.5" />
+                              <span>[{superWh.code}]</span>
+                            </span>
+                            <span className="bg-slate-900/85 backdrop-blur-xs text-white text-[9px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wider select-none shadow-xs">
+                              {item.category}
+                            </span>
+                          </div>
+                        );
+                      })()}
 
                       {/* Stock Level Badge */}
                       <span className={`absolute top-2.5 right-2.5 text-[9px] font-bold px-2 py-0.5 rounded-md border shadow-xs select-none ${
@@ -1931,6 +2410,26 @@ export const InventoryManager: React.FC<InventoryProps> = ({
                             </span>
                           )}
                         </div>
+
+                        {/* Warehouse Location Breadcrumb */}
+                        {(() => {
+                          const superWh = getSkuSuperWarehouse(item);
+                          const subWh = getSkuSubWarehouse(item, superWh);
+                          return (
+                            <div className="flex items-center gap-1.5 text-[9.5px] font-bold text-slate-500 mb-2 flex-wrap">
+                              <span 
+                                className="px-1.5 py-0.2 rounded font-mono text-white text-[8.5px] font-black shadow-2xs"
+                                style={{ backgroundColor: superWh.color || '#6366f1' }}
+                                title={superWh.name}
+                              >
+                                {superWh.code}
+                              </span>
+                              <span className="text-slate-600 truncate max-w-[110px]">{superWh.name}</span>
+                              <span className="text-slate-400">›</span>
+                              <span className="text-indigo-600 truncate max-w-[100px]">{subWh ? subWh.name : 'Almacén General'}</span>
+                            </div>
+                          );
+                        })()}
 
                         {/* Title & Description */}
                         <h3 className="text-sm font-bold text-slate-800 line-clamp-1 group-hover:text-indigo-600 transition">
@@ -2128,6 +2627,18 @@ export const InventoryManager: React.FC<InventoryProps> = ({
 
                         {/* Specs Grid */}
                         <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-[10px] bg-slate-50 p-2.5 rounded-lg border border-slate-100">
+                          {(() => {
+                            const superWh = getSkuSuperWarehouse(item);
+                            const subWh = getSkuSubWarehouse(item, superWh);
+                            return (
+                              <div className="col-span-2 flex justify-between border-b border-slate-150/70 pb-1">
+                                <span className="text-slate-400 font-medium">Ubicación Almacén:</span>
+                                <span className="font-bold text-slate-700 text-[9.5px] truncate max-w-[160px]" title={`Superalmacén: ${superWh.name} / ${subWh?.name || 'General'}`}>
+                                  [{superWh.code}] {subWh ? subWh.name : 'Almacén General'}
+                                </span>
+                              </div>
+                            );
+                          })()}
                           <div className="col-span-2 flex justify-between">
                             <span className="text-slate-400 font-medium">Código de Barras:</span>
                             <span className="font-mono font-bold text-slate-700">{item.barcode || 'N/A'}</span>
@@ -2821,7 +3332,7 @@ export const InventoryManager: React.FC<InventoryProps> = ({
         if (!product) return null;
 
         const presets = [
-          { id: '10x15', name: '10 × 15 cm', desc: 'Tarima / Envío', base: 10.0, alto: 15.0 },
+          { id: '10x15', name: '10 × 15 cm', desc: 'Caja Grande / Envío', base: 10.0, alto: 15.0 },
           { id: '10x7.5', name: '10 × 7.5 cm', desc: 'Estándar WMS', base: 10.0, alto: 7.5 },
           { id: '10x5', name: '10 × 5 cm', desc: 'Cajas / Pasillos', base: 10.0, alto: 5.0 },
           { id: '7.5x5', name: '7.5 × 5 cm', desc: 'Mediana', base: 7.5, alto: 5.0 },
@@ -4119,10 +4630,18 @@ export const InventoryManager: React.FC<InventoryProps> = ({
                 e.preventDefault();
                 if (!editingSkuItem) return;
                 try {
+                  const updatedSuperWh = warehouseSections.find(w => w.id === editSuperWarehouseId) || warehouseSections[0];
+                  const updatedSubWh = updatedSuperWh?.subWarehouses?.find(s => s.id === editSubWarehouseId);
+                  const updatedCat = editFormFields.category?.trim() || editSuggestedCategories[0] || 'General';
+
+                  if (updatedCat && !securityCategories.includes(updatedCat)) {
+                    setSecurityCategories(prev => [...prev, updatedCat]);
+                  }
+
                   if (onUpdateInventoryItem) {
                     await onUpdateInventoryItem(editingSkuItem.sku, {
                       name: editFormFields.name?.trim(),
-                      category: editFormFields.category,
+                      category: updatedCat,
                       description: editFormFields.description?.trim(),
                       minQty: Number(editFormFields.minQty) || 10,
                       cost: Number(editFormFields.cost) || 0,
@@ -4133,9 +4652,29 @@ export const InventoryManager: React.FC<InventoryProps> = ({
                       unitLength: Number(editFormFields.unitLength) || 20,
                       unitWeight: Number(editFormFields.unitWeight) || 1.0,
                       barcode: editFormFields.barcode?.trim(),
-                      imageUrl: editFormFields.imageUrl?.trim()
+                      imageUrl: editFormFields.imageUrl?.trim(),
+                      superWarehouseId: updatedSuperWh?.id,
+                      superWarehouseName: updatedSuperWh?.name,
+                      warehouseId: updatedSubWh?.id,
+                      warehouseName: updatedSubWh?.name
                     });
                   }
+
+                  // Update localStorage mappings
+                  try {
+                    const savedMapping = JSON.parse(localStorage.getItem('wms_sku_warehouse_sections') || '{}');
+                    savedMapping[editingSkuItem.sku] = updatedSuperWh?.id;
+                    localStorage.setItem('wms_sku_warehouse_sections', JSON.stringify(savedMapping));
+
+                    const savedSubMapping = JSON.parse(localStorage.getItem('wms_sku_subwarehouse_sections') || '{}');
+                    if (updatedSubWh?.id) {
+                      savedSubMapping[editingSkuItem.sku] = updatedSubWh.id;
+                    } else {
+                      delete savedSubMapping[editingSkuItem.sku];
+                    }
+                    localStorage.setItem('wms_sku_subwarehouse_sections', JSON.stringify(savedSubMapping));
+                  } catch (e) {}
+
                   setEditingSkuItem(null);
                 } catch (err) {
                   console.error(err);
@@ -4145,7 +4684,7 @@ export const InventoryManager: React.FC<InventoryProps> = ({
             >
               <div className="grid grid-cols-12 gap-3.5 max-h-[68vh] overflow-y-auto pr-1">
                 {/* Nombre */}
-                <div className="col-span-12 md:col-span-8">
+                <div className="col-span-12">
                   <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1 tracking-wider">
                     Nombre del Producto
                   </label>
@@ -4158,20 +4697,148 @@ export const InventoryManager: React.FC<InventoryProps> = ({
                   />
                 </div>
 
-                {/* Categoría */}
-                <div className="col-span-12 md:col-span-4">
-                  <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1 tracking-wider">
-                    Categoría
-                  </label>
-                  <select
-                    value={editFormFields.category || ''}
-                    onChange={(e) => setEditFormFields(prev => ({ ...prev, category: e.target.value }))}
-                    className="w-full text-xs font-semibold rounded-lg border border-slate-200 bg-white p-2.5 text-slate-700 focus:border-indigo-500 focus:outline-none transition hover:border-slate-300"
-                  >
-                    {securityCategories.map(cat => (
-                      <option key={cat} value={cat}>{cat}</option>
-                    ))}
-                  </select>
+                {/* SECCIÓN: ASIGNACIÓN DE SUPERALMACÉN, ALMACÉN Y CATEGORÍA */}
+                <div className="col-span-12 bg-gradient-to-r from-slate-50 via-indigo-50/20 to-blue-50/20 p-4 rounded-xl border border-indigo-200/80 space-y-3">
+                  <div className="flex items-center justify-between border-b border-indigo-150 pb-2">
+                    <span className="text-xs font-black uppercase text-slate-800 tracking-wider flex items-center gap-1.5">
+                      <Building2 className="h-4 w-4 text-indigo-600" />
+                      <span>Reasignación de Superalmacén, Almacén y Categoría</span>
+                    </span>
+                    <span 
+                      className="px-2 py-0.5 rounded text-[10px] font-black uppercase text-white font-mono"
+                      style={{ backgroundColor: currentEditSuperWarehouse?.color || '#3b82f6' }}
+                    >
+                      [{currentEditSuperWarehouse?.code}] {currentEditSuperWarehouse?.sectionType}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+                    {/* Superalmacén */}
+                    <div className="col-span-12 md:col-span-4">
+                      <label className="block text-[10px] uppercase font-bold text-slate-600 mb-1 tracking-wider">
+                        Superalmacén *
+                      </label>
+                      <select
+                        value={editSuperWarehouseId}
+                        onChange={(e) => handleEditSuperWarehouseChange(e.target.value)}
+                        className="w-full text-xs font-bold rounded-xl border border-indigo-200 bg-white p-2.5 text-slate-800 focus:border-indigo-600 focus:outline-none"
+                      >
+                        {warehouseSections.map((wh) => (
+                          <option key={wh.id} value={wh.id}>
+                            [{wh.code}] {wh.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Almacén / Subalmacén */}
+                    <div className="col-span-12 md:col-span-4">
+                      <label className="block text-[10px] uppercase font-bold text-slate-600 mb-1 tracking-wider">
+                        Almacén / Subalmacén *
+                      </label>
+                      <select
+                        value={editSubWarehouseId}
+                        onChange={(e) => handleEditSubWarehouseChange(e.target.value)}
+                        className="w-full text-xs font-bold rounded-xl border border-indigo-200 bg-white p-2.5 text-slate-800 focus:border-indigo-600 focus:outline-none"
+                      >
+                        {availableEditSubWarehouses.length === 0 ? (
+                          <option value="">(Sin subalmacenes - Almacén General)</option>
+                        ) : (
+                          availableEditSubWarehouses.map((sub) => (
+                            <option key={sub.id} value={sub.id}>
+                              [{sub.code}] {sub.name} ({sub.storageType})
+                            </option>
+                          ))
+                        )}
+                      </select>
+                    </div>
+
+                    {/* Categoría */}
+                    <div className="col-span-12 md:col-span-4">
+                      <label className="block text-[10px] uppercase font-bold text-slate-600 mb-1 tracking-wider">
+                        Categoría donde Debe Ir *
+                      </label>
+                      <select
+                        value={editFormFields.category || ''}
+                        onChange={(e) => setEditFormFields(prev => ({ ...prev, category: e.target.value }))}
+                        className="w-full text-xs font-bold rounded-xl border border-indigo-200 bg-white p-2.5 text-slate-800 focus:border-indigo-600 focus:outline-none"
+                      >
+                        <optgroup label={`Recomendadas para ${currentEditSuperWarehouse?.name || 'este almacén'}`}>
+                          {editSuggestedCategories.map(cat => (
+                            <option key={`edit-sug-${cat}`} value={cat}>{cat}</option>
+                          ))}
+                        </optgroup>
+                        <optgroup label="Todas las Categorías">
+                          {securityCategories.filter(c => !editSuggestedCategories.includes(c)).map(cat => (
+                            <option key={`edit-oth-${cat}`} value={cat}>{cat}</option>
+                          ))}
+                        </optgroup>
+                      </select>
+
+                      <div className="mt-1 flex gap-1">
+                        <input
+                          type="text"
+                          value={editNewCategoryInput}
+                          onChange={(e) => setEditNewCategoryInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              const t = editNewCategoryInput.trim();
+                              if (t) {
+                                if (!securityCategories.includes(t)) {
+                                  setSecurityCategories(prev => [...prev, t]);
+                                }
+                                setEditFormFields(prev => ({ ...prev, category: t }));
+                                setEditNewCategoryInput('');
+                              }
+                            }
+                          }}
+                          placeholder="+ Nueva categoría..."
+                          className="grow text-[10px] font-semibold border border-indigo-200 bg-white px-2 py-1 rounded-lg text-slate-700 focus:outline-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const t = editNewCategoryInput.trim();
+                            if (t) {
+                              if (!securityCategories.includes(t)) {
+                                setSecurityCategories(prev => [...prev, t]);
+                              }
+                              setEditFormFields(prev => ({ ...prev, category: t }));
+                              setEditNewCategoryInput('');
+                            }
+                          }}
+                          className="px-2 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-bold rounded-lg"
+                        >
+                          +
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 1-Click Category Pills */}
+                  <div className="pt-2 border-t border-indigo-150 flex flex-wrap items-center gap-1.5">
+                    <span className="text-[10px] font-bold uppercase font-mono text-slate-500 mr-1">
+                      ⚡ En 1 clic:
+                    </span>
+                    {editSuggestedCategories.map(sugCat => {
+                      const isSelected = editFormFields.category?.toLowerCase() === sugCat.toLowerCase();
+                      return (
+                        <button
+                          key={`edit-pill-${sugCat}`}
+                          type="button"
+                          onClick={() => setEditFormFields(prev => ({ ...prev, category: sugCat }))}
+                          className={`px-2 py-0.5 rounded-lg text-[10px] font-bold transition cursor-pointer ${
+                            isSelected
+                              ? 'bg-indigo-600 text-white shadow-2xs'
+                              : 'bg-white hover:bg-indigo-50 text-slate-700 border border-slate-200'
+                          }`}
+                        >
+                          {sugCat} {isSelected && '✓'}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
 
                 {/* Descripción */}
