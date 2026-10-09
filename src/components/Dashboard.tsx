@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'motion/react';
-import { Bin, InventoryItem, Order, ActivityLog, CycleCountSession } from '../types';
+import { Bin, InventoryItem, Order, ActivityLog, CycleCountSession, WarehouseSection } from '../types';
 import { WarehouseMap } from './WarehouseMap';
 import { getStoredWarehouseSections } from './WarehouseSectionManager';
 import {
@@ -33,6 +33,7 @@ import {
   Clock,
   ArrowDownLeft,
   ArrowUpRight,
+  ArrowDownUp,
   ClipboardCheck,
   RefreshCw,
   Search,
@@ -80,6 +81,7 @@ import {
   Barcode,
   ShieldAlert,
   FileDown,
+  FileSpreadsheet,
   Check,
   Package
 } from 'lucide-react';
@@ -112,7 +114,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   // Sub-tab Navigation
   const [dashboardSubTab, setDashboardSubTab] = useState<'metrics' | 'config'>('metrics');
   const [executivePerspective, setExecutivePerspective] = useState<'resumen' | 'operaciones' | 'almacen' | 'procesos' | 'capital' | 'soporte' | 'todo'>('resumen');
-  const [showFiltersBar, setShowFiltersBar] = useState<boolean>(false);
+  const [showFiltersBar, setShowFiltersBar] = useState<boolean>(true);
 
   // Currency Converter States
   const [currencyMode, setCurrencyMode] = useState<'original' | 'mxn_to_usd'>('original');
@@ -240,6 +242,178 @@ export const Dashboard: React.FC<DashboardProps> = ({
       return () => clearTimeout(timer);
     }
   }, []);
+
+  // Superalmacenes y Subalmacenes states y reactividad
+  const [warehouseSections, setWarehouseSections] = useState<WarehouseSection[]>(() => {
+    return getStoredWarehouseSections();
+  });
+
+  useEffect(() => {
+    const handleUpdate = () => {
+      setWarehouseSections(getStoredWarehouseSections());
+    };
+    window.addEventListener('wms_warehouses_updated', handleUpdate);
+    return () => window.removeEventListener('wms_warehouses_updated', handleUpdate);
+  }, []);
+
+  const [selectedDashboardSuperWhFilter, setSelectedDashboardSuperWhFilter] = useState<string>('all');
+  const [isCustomDashSuperMode, setIsCustomDashSuperMode] = useState<boolean>(false);
+  const [customDashSuperInput, setCustomDashSuperInput] = useState<string>('');
+
+  // Salidas directas de almacén registradas
+  const [directDispatchesList, setDirectDispatchesList] = useState<any[]>(() => {
+    try {
+      const saved = localStorage.getItem('OWMS_DIRECT_DISPATCH_HISTORY');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return [];
+  });
+
+  const getSkuSuperWh = (item: InventoryItem): WarehouseSection => {
+    if (item.superWarehouseId) {
+      const found = warehouseSections.find(w => w.id === item.superWarehouseId);
+      if (found) return found;
+    }
+    const savedMapping = localStorage.getItem('wms_sku_warehouse_sections');
+    if (savedMapping) {
+      try {
+        const mapping = JSON.parse(savedMapping);
+        if (mapping[item.sku]) {
+          const found = warehouseSections.find(w => w.id === mapping[item.sku]);
+          if (found) return found;
+        }
+      } catch (e) {}
+    }
+    const cat = (item.category || '').toLowerCase();
+    const name = (item.name || '').toLowerCase();
+    if (name.includes('oxxo') || cat.includes('aliment') || cat.includes('bebi') || cat.includes('perece') || cat.includes('abarrot')) {
+      const oxxoWh = warehouseSections.find(w => w.code === 'OXXO' || w.id === 'wh-oxxo');
+      if (oxxoWh) return oxxoWh;
+    }
+    if (name.includes('construc') || name.includes('cemento') || name.includes('varilla') || cat.includes('obra')) {
+      const constWh = warehouseSections.find(w => w.code === 'CONST' || w.id === 'wh-const');
+      if (constWh) return constWh;
+    }
+    if (name.includes('transporte') || name.includes('llanta') || name.includes('filtro') || cat.includes('flota')) {
+      const transWh = warehouseSections.find(w => w.code === 'TRANS' || w.id === 'wh-trans');
+      if (transWh) return transWh;
+    }
+    return warehouseSections[0] || {
+      id: 'wh-general',
+      code: 'GEN',
+      name: 'Almacén General',
+      sectionType: 'General',
+      facilityLocation: 'Nave Central',
+      color: '#3b82f6',
+      status: 'Activo',
+      createdAt: '',
+      subWarehouses: []
+    };
+  };
+
+  const warehouseMetricsData = React.useMemo(() => {
+    return warehouseSections.map(wh => {
+      const whItems = inventory.filter(item => getSkuSuperWh(item).id === wh.id);
+      const totalUnits = whItems.reduce((acc, i) => acc + (i.qty || 0), 0);
+      const rawVal = whItems.reduce((acc, i) => acc + ((i.qty || 0) * (i.cost || 25)), 0);
+      const totalVal = currencyMode === 'mxn_to_usd' ? rawVal / exchangeRate : rawVal;
+      const totalCapacity = (wh.subWarehouses || []).reduce((acc, s) => acc + (s.capacityBinsOrUnits || 1000), 0);
+      const totalOccupied = (wh.subWarehouses || []).reduce((acc, s) => acc + (s.currentOccupancy || 0), 0);
+      const occupancyPct = totalCapacity > 0 ? Math.min(100, Math.round((totalOccupied / totalCapacity) * 100)) : 0;
+      
+      const distinctCats = Array.from(new Set([
+        ...(wh.categories || []),
+        ...whItems.map(i => i.category),
+        ...(wh.subWarehouses || []).flatMap(s => s.categories || [])
+      ])).filter(Boolean);
+
+      return {
+        id: wh.id,
+        code: wh.code,
+        name: wh.name,
+        color: wh.color || '#4f46e5',
+        sectionType: wh.sectionType,
+        facilityLocation: wh.facilityLocation,
+        subWarehousesCount: wh.subWarehouses?.length || 0,
+        subWarehouses: wh.subWarehouses || [],
+        skusCount: whItems.length,
+        totalUnits,
+        totalVal,
+        totalCapacity,
+        totalOccupied,
+        occupancyPct,
+        categories: distinctCats
+      };
+    });
+  }, [warehouseSections, inventory, currencyMode, exchangeRate]);
+
+  const handleExportDashboardWarehouseMetrics = () => {
+    const data = warehouseMetricsData.map(w => ({
+      'Superalmacén': w.name,
+      'Código': w.code,
+      'Giro / Sección': w.sectionType,
+      'Ubicación': w.facilityLocation,
+      'Subalmacenes / Secciones': w.subWarehousesCount,
+      'SKUs Registrados': w.skusCount,
+      'Unidades en Stock': w.totalUnits,
+      [`Capital Valuado (${currencyMode === 'original' ? '$' : 'USD'})`]: Number(w.totalVal.toFixed(2)),
+      'Capacidad Estimada (Uds)': w.totalCapacity,
+      'Ocupación Actual (Uds)': w.totalOccupied,
+      '% Ocupación': `${w.occupancyPct}%`,
+      'Categorías Asignadas': w.categories.join(', ')
+    }));
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Metricas_Superalmacenes');
+    XLSX.writeFile(wb, `Metricas_Superalmacenes_WMS_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
+
+  useEffect(() => {
+    const handleDispatchesUpdate = () => {
+      try {
+        const saved = localStorage.getItem('OWMS_DIRECT_DISPATCH_HISTORY');
+        if (saved) setDirectDispatchesList(JSON.parse(saved));
+      } catch (e) {}
+    };
+    window.addEventListener('wms_direct_dispatches_updated', handleDispatchesUpdate);
+    return () => window.removeEventListener('wms_direct_dispatches_updated', handleDispatchesUpdate);
+  }, []);
+
+  const filteredWarehouseMetricsData = React.useMemo(() => {
+    if (selectedDashboardSuperWhFilter === 'all') return warehouseMetricsData;
+    if (selectedDashboardSuperWhFilter === '__OTHER__') {
+      const q = customDashSuperInput.toLowerCase().trim();
+      if (!q) return warehouseMetricsData;
+      return warehouseMetricsData.filter(w => 
+        w.name.toLowerCase().includes(q) || 
+        w.code.toLowerCase().includes(q) ||
+        w.sectionType.toLowerCase().includes(q)
+      );
+    }
+    return warehouseMetricsData.filter(w => w.id === selectedDashboardSuperWhFilter);
+  }, [warehouseMetricsData, selectedDashboardSuperWhFilter, customDashSuperInput]);
+
+  const handleExportDashboardDirectDispatches = () => {
+    if (directDispatchesList.length === 0) return;
+    const data = directDispatchesList.map(d => ({
+      'Folio': d.id,
+      'Fecha': new Date(d.timestamp).toLocaleString(),
+      'SKU': d.sku,
+      'Producto': d.productName,
+      'Categoría': d.category,
+      'Cantidad de Salida': d.qty,
+      'Celdas Origen': (d.originBins || []).join(', '),
+      'Destino / Cliente': d.destination,
+      'Medio de Entrega': d.deliveryMethod,
+      'Guía / Placas': d.trackingNumber || 'N/A',
+      'Operador': d.operator,
+      'Notas': d.notes || ''
+    }));
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Salidas_Directas');
+    XLSX.writeFile(wb, `Salidas_Directas_Almacen_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
 
   // Supplier Summary Calculations for Métricas (Movido desde Registro de SKU)
   const supplierStats = React.useMemo(() => {
@@ -743,20 +917,21 @@ export const Dashboard: React.FC<DashboardProps> = ({
       const now = new Date();
       
       if (timePeriod === 'today') {
-        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        return oDate >= todayStart;
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+        const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+        return oDate >= todayStart && oDate <= todayEnd;
       }
       if (timePeriod === '7days') {
         const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
         return oDate >= sevenDaysAgo;
       }
       if (timePeriod === 'this_month') {
-        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
         return oDate >= startOfMonth;
       }
       if (timePeriod === 'custom') {
-        const start = startDate ? new Date(startDate) : null;
-        const end = endDate ? new Date(endDate + 'T23:59:59') : null;
+        const start = startDate ? new Date(startDate + 'T00:00:00') : null;
+        const end = endDate ? new Date(endDate + 'T23:59:59.999') : null;
         if (start && oDate < start) return false;
         if (end && oDate > end) return false;
         return true;
@@ -773,20 +948,21 @@ export const Dashboard: React.FC<DashboardProps> = ({
       const now = new Date();
       
       if (timePeriod === 'today') {
-        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        return lDate >= todayStart;
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+        const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+        return lDate >= todayStart && lDate <= todayEnd;
       }
       if (timePeriod === '7days') {
         const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
         return lDate >= sevenDaysAgo;
       }
       if (timePeriod === 'this_month') {
-        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
         return lDate >= startOfMonth;
       }
       if (timePeriod === 'custom') {
-        const start = startDate ? new Date(startDate) : null;
-        const end = endDate ? new Date(endDate + 'T23:59:59') : null;
+        const start = startDate ? new Date(startDate + 'T00:00:00') : null;
+        const end = endDate ? new Date(endDate + 'T23:59:59.999') : null;
         if (start && lDate < start) return false;
         if (end && lDate > end) return false;
         return true;
@@ -803,20 +979,21 @@ export const Dashboard: React.FC<DashboardProps> = ({
       const now = new Date();
       
       if (timePeriod === 'today') {
-        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        return sDate >= todayStart;
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+        const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+        return sDate >= todayStart && sDate <= todayEnd;
       }
       if (timePeriod === '7days') {
         const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
         return sDate >= sevenDaysAgo;
       }
       if (timePeriod === 'this_month') {
-        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
         return sDate >= startOfMonth;
       }
       if (timePeriod === 'custom') {
-        const start = startDate ? new Date(startDate) : null;
-        const end = endDate ? new Date(endDate + 'T23:59:59') : null;
+        const start = startDate ? new Date(startDate + 'T00:00:00') : null;
+        const end = endDate ? new Date(endDate + 'T23:59:59.999') : null;
         if (start && sDate < start) return false;
         if (end && sDate > end) return false;
         return true;
@@ -824,6 +1001,78 @@ export const Dashboard: React.FC<DashboardProps> = ({
       return true;
     });
   }, [filteredCountedSessionsByLine, timePeriod, startDate, endDate]);
+
+  const filteredDirectDispatches = React.useMemo(() => {
+    return directDispatchesList.filter(d => {
+      if (timePeriod === 'all') return true;
+      if (!d.timestamp) return true;
+      const dDate = new Date(d.timestamp);
+      const now = new Date();
+      
+      if (timePeriod === 'today') {
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+        const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+        return dDate >= todayStart && dDate <= todayEnd;
+      }
+      if (timePeriod === '7days') {
+        const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        return dDate >= sevenDaysAgo;
+      }
+      if (timePeriod === 'this_month') {
+        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+        return dDate >= startOfMonth;
+      }
+      if (timePeriod === 'custom') {
+        const start = startDate ? new Date(startDate + 'T00:00:00') : null;
+        const end = endDate ? new Date(endDate + 'T23:59:59.999') : null;
+        if (start && dDate < start) return false;
+        if (end && dDate > end) return false;
+        return true;
+      }
+      return true;
+    });
+  }, [directDispatchesList, timePeriod, startDate, endDate]);
+
+  const directDispatchesMetrics = React.useMemo(() => {
+    const totalCount = filteredDirectDispatches.length;
+    const totalUnits = filteredDirectDispatches.reduce((acc, d) => acc + (d.qty || 0), 0);
+    const totalValRaw = filteredDirectDispatches.reduce((acc, d) => {
+      const prod = inventory.find(i => i.sku === d.sku);
+      const cost = prod?.cost || 25;
+      return acc + ((d.qty || 0) * cost);
+    }, 0);
+    const totalVal = currencyMode === 'mxn_to_usd' ? totalValRaw / exchangeRate : totalValRaw;
+
+    const methodMap: { [key: string]: number } = {};
+    const destinationMap: { [key: string]: number } = {};
+    filteredDirectDispatches.forEach(d => {
+      const m = d.deliveryMethod || 'Reparto Local';
+      methodMap[m] = (methodMap[m] || 0) + (d.qty || 1);
+      const dest = d.destination || 'Cliente General';
+      destinationMap[dest] = (destinationMap[dest] || 0) + (d.qty || 1);
+    });
+
+    const methodData = Object.entries(methodMap).map(([name, units]) => ({
+      name: name.length > 20 ? name.slice(0, 18) + '...' : name,
+      fullName: name,
+      unidades: units
+    }));
+
+    const destinationData = Object.entries(destinationMap).map(([name, units]) => ({
+      name: name.length > 20 ? name.slice(0, 18) + '...' : name,
+      fullName: name,
+      unidades: units
+    })).sort((a, b) => b.unidades - a.unidades).slice(0, 5);
+
+    return {
+      totalCount,
+      totalUnits,
+      totalVal,
+      methodData,
+      destinationData,
+      recent: filteredDirectDispatches.slice(-6).reverse()
+    };
+  }, [filteredDirectDispatches, inventory, currencyMode, exchangeRate]);
 
   const handlePrintReport = () => {
     window.print();
@@ -931,21 +1180,44 @@ export const Dashboard: React.FC<DashboardProps> = ({
   
   const pendingOrders = filteredOrders.filter(o => o.status === 'Pending' || o.status === 'Picking').length;
 
-  // --- Metricas para Procesos Clave ---
-  // A) Proceso de Entrada (Inbound):
+  // --- Métricas Dinámicas y Recuento de Entradas y Salidas por Selección de Fechas ---
+  // A) Proceso y Recuento de Entrada (Inbound):
   const inboundOrders = filteredOrders.filter(o => o.type === 'Inbound');
   const completedInbounds = inboundOrders.filter(o => o.status === 'Completed' || o.status === 'Delivered');
-  const totalReceivedQty = totalStock; // dynamic total active stock units
-  const receivingOrdersCount = inboundOrders.length || 4;
+  const totalReceivedUnits = inboundOrders.reduce((sum, o) => sum + o.items.reduce((s, it) => s + (it.qty || 0), 0), 0);
+  const completedInboundUnits = completedInbounds.reduce((sum, o) => sum + o.items.reduce((s, it) => s + (it.qty || 0), 0), 0);
+  const totalReceivedQty = totalReceivedUnits; // dynamic total received units in selected period
+  const receivingOrdersCount = inboundOrders.length;
 
-  // B) Proceso de Salida (Outbound):
+  // B) Proceso y Recuento de Salida (Outbound):
   const outboundOrders = filteredOrders.filter(o => o.type === 'Outbound');
   const completedOutbounds = outboundOrders.filter(o => o.status === 'Delivered' || o.status === 'Completed');
-  const totalDispatchQty = completedOutbounds.reduce((acc, o) => {
-    return acc + o.items.reduce((sum, item) => sum + item.qty, 0);
-  }, 0) || 45; // fallback helper for presentation
+  const outboundOrderUnits = outboundOrders.reduce((sum, o) => sum + o.items.reduce((s, it) => s + (it.qty || 0), 0), 0);
+  const completedOutboundUnits = completedOutbounds.reduce((sum, o) => sum + o.items.reduce((s, it) => s + (it.qty || 0), 0), 0);
+  const directDispatchUnits = filteredDirectDispatches.reduce((sum, d) => sum + (d.qty || 0), 0);
+  const totalDispatchQty = completedOutboundUnits + directDispatchUnits;
+  const totalDispatchedCount = completedOutbounds.length + filteredDirectDispatches.length;
+  const totalOutboundTransactionsCount = outboundOrders.length + filteredDirectDispatches.length;
   const outboundAccuracy = 100; // strictly verified scanning
-  const outboundFulfillmentRate = outboundOrders.length ? Math.round((completedOutbounds.length / outboundOrders.length) * 100) : 75;
+  const outboundFulfillmentRate = outboundOrders.length ? Math.round((completedOutbounds.length / outboundOrders.length) * 100) : 100;
+
+  // C) Consolidación del Recuento de Entradas y Salidas por Selección de Fechas:
+  const totalFlowOperationsCount = inboundOrders.length + totalOutboundTransactionsCount;
+  const totalFlowUnits = totalReceivedUnits + (outboundOrderUnits + directDispatchUnits);
+  const netUnitsBalance = totalReceivedUnits - (outboundOrderUnits + directDispatchUnits);
+
+  const periodLabelText = React.useMemo(() => {
+    if (timePeriod === 'today') return 'Hoy';
+    if (timePeriod === '7days') return 'Últimos 7 días';
+    if (timePeriod === 'this_month') return 'Este mes';
+    if (timePeriod === 'custom') {
+      if (startDate && endDate) return `${startDate} a ${endDate}`;
+      if (startDate) return `Desde ${startDate}`;
+      if (endDate) return `Hasta ${endDate}`;
+      return 'Período personalizado';
+    }
+    return 'Historial completo';
+  }, [timePeriod, startDate, endDate]);
 
   // C) Proceso de Conteo Cíclico (Cycle Counting):
   const accurateCounts = filteredCountedSessions.filter(s => s.deviation === 0).length;
@@ -2268,7 +2540,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   <span>Tablero Ejecutivo de Rendimiento & Capacidad</span>
                 </h2>
                 <p className="text-xs text-slate-300 max-w-2xl font-normal leading-relaxed">
-                  Visión ejecutiva centralizada de operaciones. Integra en tiempo real la <strong>infraestructura física del Mapa de Almacén</strong>, valorización de inventario, flujo de despacho y confiabilidad de auditoría.
+                  Visión ejecutiva centralizada de operaciones. Integra en tiempo real la <strong>infraestructura física del Mapa de Almacén</strong>, valorización de inventario, flujo de salidas de almacén y confiabilidad de auditoría.
                 </p>
               </div>
 
@@ -2290,7 +2562,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       {operationalHealthScore >= 90 ? 'Excelente / Alta Disponibilidad' : operationalHealthScore >= 75 ? 'Operación Estable' : 'Atención Requerida'}
                     </span>
                     <span className="text-[10px] text-slate-400 block font-mono">
-                      Espacio · Despacho · Auditoría
+                      Espacio · Salidas · Auditoría
                     </span>
                   </div>
                 </div>
@@ -2463,47 +2735,101 @@ export const Dashboard: React.FC<DashboardProps> = ({
               </div>
             </div>
 
-            {/* KPI 3: Cumplimiento de Órdenes & Fulfillment SLA */}
+            {/* KPI 3: Recuento de Entradas y Salidas por Selección de Fechas */}
             <div 
               onClick={() => onTabChange('salidas')}
-              className="bg-white border border-slate-200/90 hover:border-indigo-400 rounded-2xl shadow-xs p-5 flex flex-col justify-between hover:shadow-md transition duration-200 cursor-pointer group"
-              id="kpi-pending-orders"
+              className="bg-white border border-slate-200/90 hover:border-emerald-400 rounded-2xl shadow-xs p-5 flex flex-col justify-between hover:shadow-md transition duration-200 cursor-pointer group"
+              id="kpi-inbound-outbound-count"
             >
               <div>
                 <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-black uppercase text-emerald-600 tracking-wider font-mono flex items-center gap-1">
-                    <Truck className="h-3.5 w-3.5" />
-                    <span>03. Despacho & Flujo</span>
+                  <span className="text-[10px] font-black uppercase text-emerald-600 tracking-wider font-mono flex items-center gap-1.5">
+                    <ArrowDownUp className="h-3.5 w-3.5 text-emerald-600" />
+                    <span>03. Recuento Entradas & Salidas</span>
                   </span>
-                  <span className="text-[10px] font-black font-mono px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
-                    SLA {outboundFulfillmentRate}%
+                  <span 
+                    className="text-[10px] font-black font-mono px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 max-w-[130px] truncate"
+                    title={`Filtro de fecha aplicado: ${periodLabelText}`}
+                  >
+                    {periodLabelText}
                   </span>
                 </div>
 
                 <div className="mt-3 flex items-baseline justify-between">
                   <span className="text-3xl font-black font-mono text-slate-900 group-hover:text-emerald-600 transition tracking-tight">
-                    {formatCompactValue(pendingOrders)}
+                    {totalFlowOperationsCount}
                   </span>
                   <span className="text-xs font-mono font-bold text-slate-500">
-                    órdenes en cola
+                    operaciones ({formatCompactValue(totalFlowUnits)} uds)
                   </span>
                 </div>
 
-                {/* Progress fulfillment */}
-                <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden mt-2.5">
+                {/* Sub-tarjetas de desglose: Entradas vs Salidas */}
+                <div className="grid grid-cols-2 gap-2 mt-3">
                   <div 
-                    className="h-full rounded-full bg-emerald-500 transition-all duration-500"
-                    style={{ width: `${Math.min(100, outboundFulfillmentRate)}%` }}
+                    onClick={(e) => { e.stopPropagation(); onTabChange('entradas'); }}
+                    className="p-2 bg-emerald-50/80 hover:bg-emerald-100/70 border border-emerald-200/70 rounded-xl transition"
+                    title="Ver pedidos de Entrada en este período"
+                  >
+                    <div className="flex items-center justify-between text-[10px] font-mono font-bold text-emerald-800 uppercase">
+                      <span className="flex items-center gap-1">
+                        <ArrowDownLeft className="h-3 w-3 text-emerald-600" />
+                        Entradas
+                      </span>
+                      <span className="font-black bg-emerald-200/60 px-1 rounded text-emerald-900">{inboundOrders.length}</span>
+                    </div>
+                    <div className="text-[11px] font-mono font-black text-emerald-950 mt-1">
+                      +{totalReceivedUnits.toLocaleString()} <span className="text-[9px] font-sans font-medium text-emerald-700">uds</span>
+                    </div>
+                  </div>
+
+                  <div 
+                    onClick={(e) => { e.stopPropagation(); onTabChange('salidas'); }}
+                    className="p-2 bg-blue-50/80 hover:bg-blue-100/70 border border-blue-200/70 rounded-xl transition"
+                    title="Ver pedidos de Salida en este período"
+                  >
+                    <div className="flex items-center justify-between text-[10px] font-mono font-bold text-blue-800 uppercase">
+                      <span className="flex items-center gap-1">
+                        <ArrowUpRight className="h-3 w-3 text-blue-600" />
+                        Salidas
+                      </span>
+                      <span className="font-black bg-blue-200/60 px-1 rounded text-blue-900">{totalOutboundTransactionsCount}</span>
+                    </div>
+                    <div className="text-[11px] font-mono font-black text-blue-950 mt-1">
+                      -{(outboundOrderUnits + directDispatchUnits).toLocaleString()} <span className="text-[9px] font-sans font-medium text-blue-700">uds</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Barra de proporción Entradas vs Salidas */}
+                <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden mt-2.5 flex" title={`Entradas: ${inboundOrders.length} ops (${totalReceivedUnits} uds) | Salidas: ${totalOutboundTransactionsCount} ops (${outboundOrderUnits + directDispatchUnits} uds)`}>
+                  <div 
+                    className="h-full bg-emerald-500 transition-all duration-500"
+                    style={{ 
+                      width: `${totalFlowOperationsCount > 0 
+                        ? Math.max(8, Math.min(92, Math.round((inboundOrders.length / totalFlowOperationsCount) * 100))) 
+                        : 50}%` 
+                    }}
+                  />
+                  <div 
+                    className="h-full bg-blue-500 transition-all duration-500"
+                    style={{ 
+                      width: `${totalFlowOperationsCount > 0 
+                        ? Math.max(8, Math.min(92, Math.round((totalOutboundTransactionsCount / totalFlowOperationsCount) * 100))) 
+                        : 50}%` 
+                    }}
                   />
                 </div>
               </div>
 
               <div className="pt-3 border-t border-slate-100 mt-3 flex items-center justify-between text-[11px]">
                 <span className="text-slate-500 font-mono">
-                  {completedOutbounds.length} despachadas hoy
+                  Balance Neto: <strong className={netUnitsBalance >= 0 ? 'text-emerald-600 font-black' : 'text-amber-600 font-black'}>
+                    {netUnitsBalance > 0 ? `+${netUnitsBalance.toLocaleString()}` : netUnitsBalance.toLocaleString()} uds
+                  </strong>
                 </span>
                 <span className="text-emerald-600 font-bold group-hover:underline flex items-center gap-0.5">
-                  Ver Salidas →
+                  Ver Flujo →
                 </span>
               </div>
             </div>
@@ -2556,10 +2882,433 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </div>
 
           {/* ========================================================================= */}
-          {/* CENTRO DE CONECTIVIDAD DE OPCIONES DEL WMS (LIVE COMMAND MATRIX)          */}
-          {/* Conecta y refleja en tiempo real las 12 opciones de la plataforma        */}
+          {/* FILTRO GENERAL DE SUPERALMACÉN Y ALMACÉN EN EL DASHBOARD                  */}
           {/* ========================================================================= */}
-          {(executivePerspective === 'resumen' || executivePerspective === 'todo') && (
+          <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-3xs flex flex-col md:flex-row items-start md:items-center justify-between gap-4 animate-fadeIn no-print" id="dashboard-superwarehouse-filter-bar">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3 w-full md:w-auto">
+              <span className="text-xs font-black uppercase tracking-wider font-mono text-indigo-700 flex items-center gap-1.5 shrink-0">
+                <Building2 className="h-4 w-4 text-indigo-600" />
+                Filtrar por Superalmacén:
+              </span>
+              <select
+                value={isCustomDashSuperMode ? '__OTHER__' : selectedDashboardSuperWhFilter}
+                onChange={(e) => {
+                  if (e.target.value === '__OTHER__') {
+                    setIsCustomDashSuperMode(true);
+                  } else {
+                    setIsCustomDashSuperMode(false);
+                    setSelectedDashboardSuperWhFilter(e.target.value);
+                  }
+                }}
+                className="w-full sm:w-auto px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+              >
+                <option value="all">Todos los Superalmacenes ({warehouseSections.length})</option>
+                {warehouseSections.map(wh => (
+                  <option key={wh.id} value={wh.id}>[{wh.code}] {wh.name}</option>
+                ))}
+                <option value="__OTHER__">➕ Otro Superalmacén (especificar de qué se trata...)</option>
+              </select>
+
+              {isCustomDashSuperMode && (
+                <div className="flex items-center gap-1.5 animate-fadeIn">
+                  <input
+                    type="text"
+                    value={customDashSuperInput}
+                    onChange={(e) => setCustomDashSuperInput(e.target.value)}
+                    placeholder="Escriba de qué Superalmacén se trata..."
+                    className="px-3 py-1.5 bg-indigo-50/70 border border-indigo-300 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsCustomDashSuperMode(false);
+                      setCustomDashSuperInput('');
+                      setSelectedDashboardSuperWhFilter('all');
+                    }}
+                    className="text-xs text-slate-400 hover:text-slate-600 font-bold p-1 cursor-pointer"
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={handleExportDashboardWarehouseMetrics}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-3.5 py-2 rounded-xl transition shadow-xs flex items-center gap-1.5 cursor-pointer active:scale-95"
+                title="Descargar métricas de todos los superalmacenes en Excel"
+              >
+                <FileSpreadsheet className="h-4 w-4" />
+                <span>Exportar Superalmacenes (.xlsx)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleExportDashboardDirectDispatches}
+                className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs px-3.5 py-2 rounded-xl transition shadow-xs flex items-center gap-1.5 cursor-pointer active:scale-95"
+                title="Descargar historial de salidas directas en Excel"
+              >
+                <Truck className="h-4 w-4" />
+                <span>Exportar Salidas Directas (.xlsx)</span>
+              </button>
+            </div>
+          </div>
+
+          {/* ========================================================================= */}
+          {/* PANEL DE SUPERALMACENES, SUBALMACENES Y CATEGORÍAS (CONEXIÓN EN VIVO)      */}
+          {/* ========================================================================= */}
+          {(executivePerspective === 'resumen' || executivePerspective === 'almacen' || executivePerspective === 'capital' || executivePerspective === 'todo') && (
+            <div className="bg-white border border-slate-200/90 rounded-3xl p-6 sm:p-7 shadow-xs space-y-6 animate-fadeIn" id="superwarehouses-metrics-panel">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-150">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="p-1 px-2.5 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700 text-[10px] font-mono font-black uppercase tracking-wider flex items-center gap-1.5">
+                      <Building2 className="h-3.5 w-3.5" />
+                      Superalmacenes & Secciones
+                    </span>
+                    <h3 className="text-base sm:text-lg font-black text-slate-900 tracking-tight">
+                      Métricas por Superalmacén, Subalmacenes y Categorías
+                    </h3>
+                  </div>
+                  <p className="text-xs text-slate-500 max-w-3xl leading-relaxed">
+                    Visualice el estado en tiempo real de cada Superalmacén (OXXO, Construcción, Transporte, etc.), sus subalmacenes asignados, capacidades de ocupación, stock y categorías (incluyendo las creadas con &quot;Otro&quot;).
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={handleExportDashboardWarehouseMetrics}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-4 py-2.5 rounded-xl transition shadow-xs flex items-center gap-2 cursor-pointer active:scale-95"
+                  >
+                    <Download className="h-4 w-4" />
+                    <span>Descargar Reporte Excel (.xlsx)</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Grid de Tarjetas de Superalmacenes (Ocultado a solicitud del usuario) */}
+              {false && (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+                  {filteredWarehouseMetricsData.map((wh) => (
+                    <div
+                      key={wh.id}
+                      className="border border-slate-200/90 rounded-2xl p-5 bg-gradient-to-br from-white to-slate-50/50 hover:border-indigo-400 transition-all shadow-3xs hover:shadow-sm space-y-4 flex flex-col justify-between"
+                    >
+                      <div className="space-y-3">
+                        {/* Top Header Card */}
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className="font-mono font-black text-xs px-2.5 py-1 rounded-lg text-white shadow-3xs"
+                              style={{ backgroundColor: wh.color }}
+                            >
+                              [{wh.code}]
+                            </span>
+                            <span className="text-[10px] font-mono font-bold text-slate-400 uppercase tracking-wider">
+                              {wh.sectionType}
+                            </span>
+                          </div>
+                          <span className={`text-[10px] font-mono font-black px-2 py-0.5 rounded-full ${
+                            wh.occupancyPct >= 90 ? 'bg-rose-100 text-rose-800' : wh.occupancyPct >= 75 ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'
+                          }`}>
+                            {wh.occupancyPct}% Ocupación
+                          </span>
+                        </div>
+
+                        <div>
+                          <h4 className="text-base font-extrabold text-slate-900 tracking-tight">
+                            {wh.name}
+                          </h4>
+                          <span className="text-xs text-slate-400 font-medium flex items-center gap-1 mt-0.5">
+                            <MapPin className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                            <span>{wh.facilityLocation}</span>
+                          </span>
+                        </div>
+
+                        {/* Sub-almacenes pills */}
+                        <div className="space-y-1.5 pt-1">
+                          <span className="text-[10px] uppercase font-bold text-slate-400 font-mono block">
+                            Subalmacenes Registrados ({wh.subWarehousesCount}):
+                          </span>
+                          <div className="flex flex-wrap gap-1.5">
+                            {wh.subWarehouses.length === 0 ? (
+                              <span className="text-[10px] text-slate-400 italic">Área general única</span>
+                            ) : (
+                              wh.subWarehouses.map((s: any) => (
+                                <span
+                                  key={s.id}
+                                  className="text-[10px] font-mono font-bold px-2 py-0.5 bg-white border border-slate-200 text-slate-700 rounded-lg shadow-3xs"
+                                >
+                                  [{s.code}] {s.name}
+                                </span>
+                              ))
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Progress Bar of Capacity */}
+                        <div className="space-y-1 pt-1">
+                          <div className="flex justify-between text-[11px] font-mono">
+                            <span className="text-slate-400 font-bold">Capacidad Utilizada:</span>
+                            <span className="font-bold text-slate-700">{wh.totalOccupied} / {wh.totalCapacity} uds</span>
+                          </div>
+                          <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
+                            <div
+                              className={`h-full rounded-full transition-all duration-500 ${
+                                wh.occupancyPct >= 90 ? 'bg-rose-500' : wh.occupancyPct >= 75 ? 'bg-amber-500' : 'bg-emerald-500'
+                              }`}
+                              style={{ width: `${Math.min(100, wh.occupancyPct)}%` }}
+                            />
+                          </div>
+                        </div>
+
+                        {/* Categorías asignadas */}
+                        <div className="space-y-1.5 pt-1">
+                          <span className="text-[10px] uppercase font-bold text-slate-400 font-mono block">
+                            Categorías Asignadas ({wh.categories.length}):
+                          </span>
+                          <div className="flex flex-wrap gap-1">
+                            {wh.categories.map((cat: string) => (
+                              <span
+                                key={cat}
+                                className="text-[9px] font-semibold px-2 py-0.5 bg-indigo-50 border border-indigo-150 text-indigo-800 rounded-md"
+                              >
+                                {cat}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Card Footer KPIs */}
+                      <div className="pt-3 border-t border-slate-200/80 grid grid-cols-3 gap-2 text-center bg-white/70 p-2.5 rounded-xl border border-slate-100">
+                        <div>
+                          <span className="text-[9px] font-mono text-slate-400 uppercase font-bold block">SKUs</span>
+                          <span className="text-sm font-black font-mono text-slate-800">{wh.skusCount}</span>
+                        </div>
+                        <div>
+                          <span className="text-[9px] font-mono text-slate-400 uppercase font-bold block">Stock</span>
+                          <span className="text-sm font-black font-mono text-slate-800">{wh.totalUnits.toLocaleString()}</span>
+                        </div>
+                        <div>
+                          <span className="text-[9px] font-mono text-slate-400 uppercase font-bold block">Capital</span>
+                          <span className="text-sm font-black font-mono text-emerald-700">
+                            {currencyMode === 'mxn_to_usd' ? 'USD $' : '$'}
+                            {wh.totalVal.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Gráficas comparativas de Superalmacenes */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 pt-2">
+                <div className="bg-slate-50/70 border border-slate-200 rounded-2xl p-5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-wider font-mono text-slate-700">
+                      Distribución de Unidades en Stock por Superalmacén
+                    </span>
+                    <span className="text-[10px] font-mono text-slate-400">Total: {formatCompactValue(totalStock)} uds</span>
+                  </div>
+                  <div className="h-56">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={filteredWarehouseMetricsData} margin={{ top: 10, right: 10, left: -10, bottom: 20 }}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                        <XAxis dataKey="code" tick={{ fontSize: 11, fontWeight: 'bold' }} stroke="#64748b" />
+                        <YAxis tick={{ fontSize: 10 }} stroke="#64748b" />
+                        <Tooltip
+                          contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px', color: '#fff', fontSize: '11px' }}
+                          formatter={(val: any) => [`${Number(val).toLocaleString()} unidades`, 'Stock']}
+                        />
+                        <Bar dataKey="totalUnits" fill="#4f46e5" radius={[6, 6, 0, 0]}>
+                          {filteredWarehouseMetricsData.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={entry.color || '#4f46e5'} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                <div className="bg-slate-50/70 border border-slate-200 rounded-2xl p-5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-wider font-mono text-slate-700">
+                      Capacidad Máxima vs Ocupación Actual (Uds)
+                    </span>
+                    <span className="text-[10px] font-mono text-slate-400">Capacidad Total Estimada</span>
+                  </div>
+                  <div className="h-56">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={filteredWarehouseMetricsData} margin={{ top: 10, right: 10, left: -10, bottom: 20 }}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                        <XAxis dataKey="code" tick={{ fontSize: 11, fontWeight: 'bold' }} stroke="#64748b" />
+                        <YAxis tick={{ fontSize: 10 }} stroke="#64748b" />
+                        <Tooltip
+                          contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px', color: '#fff', fontSize: '11px' }}
+                        />
+                        <Bar dataKey="totalCapacity" name="Capacidad Total" fill="#94a3b8" radius={[4, 4, 0, 0]} />
+                        <Bar dataKey="totalOccupied" name="Ocupación Actual" fill="#10b981" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ========================================================================= */}
+          {/* PANEL DE SALIDAS DIRECTAS DE ALMACÉN                                       */}
+          {/* ========================================================================= */}
+          {(executivePerspective === 'resumen' || executivePerspective === 'operaciones' || executivePerspective === 'procesos' || executivePerspective === 'todo') && (
+            <div className="bg-white border border-slate-200/90 rounded-3xl p-6 sm:p-7 shadow-xs space-y-6 animate-fadeIn" id="direct-dispatches-metrics-panel">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-150">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="p-1 px-2.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-[10px] font-mono font-black uppercase tracking-wider flex items-center gap-1.5">
+                      <Truck className="h-3.5 w-3.5" />
+                      Salidas Directas de Almacén
+                    </span>
+                    <h3 className="text-base sm:text-lg font-black text-slate-900 tracking-tight">
+                      Métricas y Registro de Salidas Inmediatas de Almacén
+                    </h3>
+                  </div>
+                  <p className="text-xs text-slate-500 max-w-3xl leading-relaxed">
+                    Historial consolidado de mercancía con salida directa de almacén sin orden previa: productos entregados, métodos de transporte y destinos atendidos.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => onTabChange('salidas')}
+                    className="px-3.5 py-2 bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 font-bold text-xs rounded-xl transition cursor-pointer"
+                  >
+                    Ir a Módulo de Salidas →
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleExportDashboardDirectDispatches}
+                    disabled={directDispatchesMetrics.totalCount === 0}
+                    className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-xs px-4 py-2 rounded-xl transition shadow-xs flex items-center gap-2 cursor-pointer active:scale-95"
+                  >
+                    <Download className="h-4 w-4" />
+                    <span>Descargar Salidas Directas (.xlsx)</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* 4 Mini KPI Cards */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="bg-slate-50/80 border border-slate-200 rounded-2xl p-4 space-y-1">
+                  <span className="text-[10px] font-mono uppercase font-bold text-slate-400 block">Total Salidas Directas</span>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-2xl font-black font-mono text-slate-900">{directDispatchesMetrics.totalCount}</span>
+                    <span className="text-xs text-slate-400 font-medium">salidas registradas</span>
+                  </div>
+                </div>
+
+                <div className="bg-slate-50/80 border border-slate-200 rounded-2xl p-4 space-y-1">
+                  <span className="text-[10px] font-mono uppercase font-bold text-slate-400 block">Unidades con Salida</span>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-2xl font-black font-mono text-amber-600">{directDispatchesMetrics.totalUnits.toLocaleString()}</span>
+                    <span className="text-xs text-slate-400 font-medium">piezas totales</span>
+                  </div>
+                </div>
+
+                <div className="bg-slate-50/80 border border-slate-200 rounded-2xl p-4 space-y-1">
+                  <span className="text-[10px] font-mono uppercase font-bold text-slate-400 block">Valor Mercancía de Salida</span>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-2xl font-black font-mono text-emerald-600">
+                      {currencyMode === 'mxn_to_usd' ? 'USD $' : '$'}
+                      {directDispatchesMetrics.totalVal.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="bg-slate-50/80 border border-slate-200 rounded-2xl p-4 space-y-1">
+                  <span className="text-[10px] font-mono uppercase font-bold text-slate-400 block">Medios de Entrega Activos</span>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-2xl font-black font-mono text-indigo-600">{directDispatchesMetrics.methodData.length}</span>
+                    <span className="text-xs text-slate-400 font-medium">canales utilizados</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Tabla de Salidas Directas Recientes */}
+              {directDispatchesMetrics.recent.length === 0 ? (
+                <div className="p-8 text-center bg-slate-50 border border-dashed border-slate-250 rounded-2xl space-y-2">
+                  <Truck className="h-8 w-8 text-slate-300 mx-auto" />
+                  <p className="text-xs font-bold text-slate-600">No hay salidas directas registradas aún en el sistema</p>
+                  <p className="text-[11px] text-slate-400">Puede generar una salida rápida en la pestaña &quot;Salidas&quot; con código de barras o selección de SKU.</p>
+                </div>
+              ) : (
+                <div className="border border-slate-200 rounded-2xl overflow-hidden">
+                  <div className="p-3 bg-slate-100/70 border-b border-slate-200 flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-wider font-mono text-slate-700">
+                      Últimas Salidas Directas de Almacén Realizadas
+                    </span>
+                    <span className="text-[10px] font-mono text-slate-500 font-bold">
+                      Mostrando {directDispatchesMetrics.recent.length} de {directDispatchesMetrics.totalCount}
+                    </span>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-slate-50 border-b border-slate-200 text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono">
+                          <th className="py-2.5 px-3">Folio</th>
+                          <th className="py-2.5 px-3">Fecha / Hora</th>
+                          <th className="py-2.5 px-3">Producto / SKU</th>
+                          <th className="py-2.5 px-3">Cantidad</th>
+                          <th className="py-2.5 px-3">Destino / Cliente</th>
+                          <th className="py-2.5 px-3">Medio de Transporte</th>
+                          <th className="py-2.5 px-3">Operador</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-150 font-medium">
+                        {directDispatchesMetrics.recent.map((d: any) => (
+                          <tr key={d.id} className="hover:bg-slate-50/60 transition">
+                            <td className="py-2.5 px-3 font-mono font-bold text-amber-700">{d.id}</td>
+                            <td className="py-2.5 px-3 font-mono text-slate-500 text-[11px]">
+                              {new Date(d.timestamp).toLocaleDateString()} {new Date(d.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <span className="font-bold text-slate-800 block">{d.productName}</span>
+                              <span className="text-[10px] font-mono text-slate-400">{d.sku}</span>
+                            </td>
+                            <td className="py-2.5 px-3 font-mono font-black text-slate-900">
+                              {d.qty} uds
+                            </td>
+                            <td className="py-2.5 px-3 font-semibold text-slate-700">
+                              {d.destination}
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <span className="inline-block text-[10px] font-semibold px-2 py-0.5 bg-indigo-50 border border-indigo-150 text-indigo-800 rounded-md">
+                                {d.deliveryMethod}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3 text-slate-500 text-[11px]">
+                              {d.operator}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ========================================================================= */}
+          {/* CENTRO DE CONECTIVIDAD DE OPCIONES DEL WMS (OCULTADO A SOLICITUD)         */}
+          {/* ========================================================================= */}
+          {false && (executivePerspective === 'resumen' || executivePerspective === 'todo') && (
             <div className="bg-white border border-slate-200/90 rounded-3xl p-6 sm:p-7 shadow-xs space-y-6 animate-fadeIn" id="platform-options-matrix">
               
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-150">
@@ -2651,7 +3400,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                         Operaciones Básicas
                       </span>
                       <h4 className="text-sm font-extrabold text-slate-900 group-hover:text-blue-700 transition">
-                        Salidas & Despacho
+                        Salidas de Almacén
                       </h4>
                     </div>
 
@@ -2661,7 +3410,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                         <span className="text-sm font-black font-mono text-slate-800">{pendingOrders}</span>
                       </div>
                       <div className="flex justify-between items-baseline text-[11px] text-slate-400">
-                        <span>Despachadas hoy:</span>
+                        <span>Salidas hoy:</span>
                         <span className="font-mono font-semibold text-slate-600">{completedOutbounds.length} órdenes</span>
                       </div>
                     </div>
@@ -3297,11 +4046,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
               
               <div className="space-y-3 mt-6">
                 <div className="flex justify-between text-xs">
-                  <span className="text-slate-500 font-medium">Unidades Ingresadas</span>
-                  <span className="font-mono font-bold text-slate-700">{totalReceivedQty} unidades</span>
+                  <span className="text-slate-500 font-medium">Unidades Ingresadas ({periodLabelText})</span>
+                  <span className="font-mono font-bold text-slate-700">{totalReceivedUnits.toLocaleString()} unidades</span>
                 </div>
                 <div className="flex justify-between text-xs">
-                  <span className="text-slate-500 font-medium">Órdenes de Recepción (Asignadas)</span>
+                  <span className="text-slate-500 font-medium">Órdenes de Recepción</span>
                   <span className="font-mono font-bold text-slate-700">{receivingOrdersCount} pedidos</span>
                 </div>
                 <div className="flex justify-between text-xs">
@@ -3326,7 +4075,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
               <div className="flex justify-between items-start">
                 <div className="space-y-1">
                   <span className="text-[10px] font-black uppercase text-indigo-500 tracking-wider">02. Proceso de Salida</span>
-                  <h3 className="text-lg font-bold text-slate-800">Despacho & Surtido</h3>
+                  <h3 className="text-lg font-bold text-slate-800">Salidas de Almacén & Surtido</h3>
                 </div>
                 <div className="h-9 w-9 rounded-xl bg-indigo-100 border border-indigo-200 flex items-center justify-center text-indigo-600">
                   <ArrowUpRight className="h-5 w-5" />
@@ -3335,12 +4084,12 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
               <div className="space-y-3 mt-6">
                 <div className="flex justify-between text-xs">
-                  <span className="text-slate-500 font-medium">Unidades Surtidas</span>
-                  <span className="font-mono font-bold text-slate-700">{totalDispatchQty} unidades</span>
+                  <span className="text-slate-500 font-medium">Unidades Surtidas ({periodLabelText})</span>
+                  <span className="font-mono font-bold text-slate-700">{totalDispatchQty.toLocaleString()} unidades</span>
                 </div>
                 <div className="flex justify-between text-xs">
-                  <span className="text-slate-500 font-medium">Órdenes Despachadas</span>
-                  <span className="font-mono font-bold text-slate-700">{completedOutbounds.length} pedidos</span>
+                  <span className="text-slate-500 font-medium">Órdenes de Salida</span>
+                  <span className="font-mono font-bold text-slate-700">{totalDispatchedCount} pedidos</span>
                 </div>
                 <div className="flex justify-between text-xs">
                   <span className="text-slate-500 font-medium">Tasa de Surtido (Fulfillment)</span>
@@ -4706,7 +5455,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                           <span className="font-bold text-slate-700">{skuItem.qty} uds</span>
                         </div>
                         <div className="text-center">
-                          <span className="text-slate-400 block text-[9px] font-sans">Despachado</span>
+                          <span className="text-slate-400 block text-[9px] font-sans">Salidas</span>
                           <span className="font-bold text-indigo-600">{itemOutbound > 0 ? `${itemOutbound} uds` : '0 uds'}</span>
                         </div>
                         <div className="text-right">
@@ -4717,7 +5466,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
                       {isInactive && (
                         <div className="p-2 bg-rose-50/70 border border-rose-100 rounded-lg text-[10px] text-rose-800 font-medium leading-relaxed">
-                          ⚠️ Estancado: Este SKU no registra despachos en las operaciones actuales. Se recomienda reubicar en zona fría o evaluar liquidación para liberar celdas.
+                          ⚠️ Estancado: Este SKU no registra salidas de almacén en las operaciones actuales. Se recomienda reubicar en zona fría o evaluar liquidación para liberar celdas.
                         </div>
                       )}
                     </div>
@@ -5584,7 +6333,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     📦 Ocupación de Racks
                   </div>
                   <div className="bg-white p-2 rounded-lg border border-slate-200 text-center">
-                    🚚 Tasa de Despacho
+                    🚚 Tasa de Salidas de Almacén
                   </div>
                 </div>
               </div>

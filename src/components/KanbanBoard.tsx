@@ -97,7 +97,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
         },
         {
           id: 'TSK-103',
-          title: 'Recepción y Despacho Sensores Térmicos',
+          title: 'Salida de Almacén Sensores Térmicos',
           orderId: 'ORD-OUT-992C',
           stage: 'exit',
           assignedOperatorId: 'OP-103',
@@ -296,7 +296,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
 
         <div className="bg-slate-50 border border-slate-150 p-4 rounded-xl flex items-center justify-between">
           <div className="space-y-1">
-            <span className="text-[9px] uppercase font-bold text-slate-400 tracking-wider">Fase de Despacho / Salida</span>
+            <span className="text-[9px] uppercase font-bold text-slate-400 tracking-wider">Fase de Salida de Almacén</span>
             <h4 className="text-2xl font-extrabold text-slate-800">{exitTasks.length} <span className="text-xs text-slate-400 font-normal">tareas</span></h4>
           </div>
           <div className="text-right">

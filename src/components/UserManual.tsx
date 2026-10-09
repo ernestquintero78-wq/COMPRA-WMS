@@ -57,7 +57,7 @@ export function UserManual() {
       fields: [
         { name: 'Celdas (Bins)', description: 'Ubicaciones físicas organizadas con límites de volumen (m³) y peso máximo (kg).' },
         { name: 'Catálogo de SKU', description: 'Registro técnico de cada tipo de artículo con sus dimensiones físicas, peso y stock mínimo de seguridad.' },
-        { name: 'Órdenes (Orders)', description: 'Instrucciones transaccionales de Inbound (entradas de proveedor) u Outbound (despacho a cliente).' }
+        { name: 'Órdenes (Orders)', description: 'Instrucciones transaccionales de Inbound (entradas de proveedor) u Outbound (salidas de almacén a clientes).' }
       ],
       bestPractices: [
         'Siempre inicie sesión con su perfil de operador correcto en la pestaña de "Registro de Personal" para firmar digitalmente cada transacción.',
@@ -96,22 +96,22 @@ export function UserManual() {
     },
     {
       id: 'salidas',
-      title: 'Operación de Salidas y Despacho Rápido',
+      title: 'Operación de Salidas de Almacén',
       category: 'operacion',
       icon: ArrowUpRight,
-      summary: 'Despacho directo de mercancía sin requerir creación previa de órdenes: seleccione o escanee el producto, defina el destino y medio de entrega.',
-      objective: 'Agilizar al máximo el flujo de salida y despacho de mercancías permitiendo egresos inmediatos en 3 pasos sencillos, deduciendo el stock y celdas físicas en tiempo real.',
+      summary: 'Salida directa de almacén sin requerir creación previa de órdenes: seleccione o escanee el producto, defina el destino y medio de entrega.',
+      objective: 'Agilizar al máximo el flujo de salidas de almacén permitiendo egresos inmediatos en 3 pasos sencillos, deduciendo el stock y celdas físicas en tiempo real.',
       steps: [
         'Vaya a la pestaña "Salidas" en el menú lateral.',
         'Paso 1 (Producto): Escanee el código de barras/SKU con lector o seleccione el artículo directamente desde el catálogo visual con stock disponible y celdas de picking en vivo.',
-        'Indique la cantidad a despachar utilizando los controles o botones rápidos (+1, +5, +10, Máx).',
+        'Indique la cantidad de salida utilizando los controles o botones rápidos (+1, +5, +10, Máx).',
         'Paso 2 (Destino): Ingrese el destino, cliente o sucursal (o use los chips rápidos: Cliente Mostrador, Sucursal Norte, Envío a Domicilio, etc.).',
         'Paso 3 (Medio de Entrega): Elija el transporte (Reparto Local, Paquetería Externa, Entrega en Mostrador, Transporte Pesado, Mensajería Express) y opcionalmente número de guía o notas.',
         'Haga clic en el botón "PROCESAR SALIDA INMEDIATA": El sistema deducirá el stock del catálogo y de las celdas físicas automáticamente, reflejándolo en los tableros de Métricas.',
-        'Obtenga el Comprobante Digital / Vale de Salida oficial con opción a imprimir remisión y visualícelo en el historial de despachos.'
+        'Obtenga el Comprobante Digital / Vale de Salida oficial con opción a imprimir remisión y visualícelo en el historial de salidas de almacén.'
       ],
       fields: [
-        { name: 'Producto / SKU', description: 'Artículo a despachar con validación de stock disponible y celdas de origen para picking.' },
+        { name: 'Producto / SKU', description: 'Artículo para salida de almacén con validación de stock disponible y celdas de origen para picking.' },
         { name: 'Destino', description: 'Cliente, sucursal, tienda o punto de entrega de la mercancía.' },
         { name: 'Medio de Entrega', description: 'Método de transporte utilizado para el traslado físico del material.' },
         { name: 'Folio de Salida', description: 'Identificador único generado automáticamente (OUT-XXXXXX) para trazabilidad y auditoría.' }
@@ -146,7 +146,7 @@ export function UserManual() {
       bestPractices: [
         'Utilice movimientos internos periódicamente para agrupar saldos de SKUs idénticos en menos celdas (consolidación de inventario).',
         'Nunca realice un movimiento físico sin reportarlo en el sistema; de lo contrario, la ruta de picking dirigirá a los operadores a celdas vacías.',
-        'Si un artículo es perecedero, ubíquelo en posiciones frontales y bajas mediante un movimiento para facilitar su despacho rápido (FIFO).'
+        'Si un artículo es perecedero, ubíquelo en posiciones frontales y bajas mediante un movimiento para facilitar su salida rápida de almacén (FIFO).'
       ]
     },
     {

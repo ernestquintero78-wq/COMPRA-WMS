@@ -403,18 +403,18 @@ export const BarcodeConsole: React.FC<BarcodeConsoleProps> = ({
   const handleOutboundScanSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!scannedBarcode.trim()) {
-      showFeedback('Escanee el código de barras del producto a despachar.', 'err');
+      showFeedback('Escanee el código de barras del producto para la salida de almacén.', 'err');
       return;
     }
 
     const scannedProductFound = findProductByBarcode(scannedBarcode);
     if (!scannedProductFound) {
-      showFeedback(`⚠️ SIN REGISTRO: No se tiene registro del código escaneado "${scannedBarcode}". No se puede despachar un artículo inexistente en el catálogo.`, 'err');
+      showFeedback(`⚠️ SIN REGISTRO: No se tiene registro del código escaneado "${scannedBarcode}". No se puede dar salida a un artículo inexistente en el catálogo.`, 'err');
       return;
     }
 
     if (!selectedOrderId) {
-      showFeedback('Seleccione una orden de salida activa para despachar el material escaneado.', 'err');
+      showFeedback('Seleccione una orden de salida activa para procesar la salida del material escaneado.', 'err');
       return;
     }
 
@@ -433,7 +433,7 @@ export const BarcodeConsole: React.FC<BarcodeConsoleProps> = ({
 
     // Check inventory stock availability
     if (scannedProductFound.qty < orderItem.qty) {
-      showFeedback(`Error de Stock: Stock insuficiente en almacén (${scannedProductFound.qty} unidades) para despachar las ${orderItem.qty} unidades solicitadas.`, 'err');
+      showFeedback(`Error de Stock: Stock insuficiente en almacén (${scannedProductFound.qty} unidades) para la salida de las ${orderItem.qty} unidades solicitadas.`, 'err');
       return;
     }
 
@@ -501,11 +501,11 @@ export const BarcodeConsole: React.FC<BarcodeConsoleProps> = ({
         updatedBins,
         updatedInventory,
         updatedOrders,
-        'Despacho Validado por Escáner',
-        `Orden ${order.id} despachada tras lectura y validación de ${orderItem.qty} unidades de ${scannedProductFound.sku}. Guía: ${trackingNo}`
+        'Salida de Almacén Validada por Escáner',
+        `Orden ${order.id} procesada para salida tras lectura y validación de ${orderItem.qty} unidades de ${scannedProductFound.sku}. Guía: ${trackingNo}`
       );
 
-      showFeedback(`✓ SALIDA EXITOSA: Despacho completado para la Orden ${order.id}. Se extrajeron y validaron ${orderItem.qty} unidades de ${scannedProductFound.name}.`);
+      showFeedback(`✓ SALIDA EXITOSA: Salida de almacén completada para la Orden ${order.id}. Se extrajeron y validaron ${orderItem.qty} unidades de ${scannedProductFound.name}.`);
       setScannedBarcode('');
       setSelectedOrderId('');
       setSourcePickBinId('');
@@ -593,7 +593,7 @@ export const BarcodeConsole: React.FC<BarcodeConsoleProps> = ({
                 : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
             }`}
           >
-            📤 Despacho y Salidas
+            📤 Salidas de Almacén
           </button>
           <button
             onClick={() => { setActiveModule('conteo'); setFeedbackMsg(null); }}
@@ -619,7 +619,7 @@ export const BarcodeConsole: React.FC<BarcodeConsoleProps> = ({
               <Scan className="h-4 w-4 text-blue-600" />
               <span>
                 {activeModule === 'entrada' && 'Operación de Entrada (Receiving & Putaway)'}
-                {activeModule === 'salida' && 'Operación de Salida (Picking & Despacho)'}
+                {activeModule === 'salida' && 'Operación de Salida de Almacén (Picking & Salida)'}
                 {activeModule === 'conteo' && 'Auditoría de Conteo Cíclico (Cyclic Auditing)'}
               </span>
             </span>
@@ -988,14 +988,14 @@ export const BarcodeConsole: React.FC<BarcodeConsoleProps> = ({
               <div className="bg-amber-50/60 rounded-2xl p-3.5 border border-amber-150 text-[11px] text-amber-900 leading-relaxed flex items-start gap-2.5">
                 <Info className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
                 <div>
-                  <strong>Operación de Salidas:</strong> Escanee el código de barras del producto a despachar. Si no tiene registro, la plataforma lo indicará claramente. Si está registrado, <strong>le mostrará en qué posición está físicamente y de qué celda se sugiere extraer</strong> para agilizar el picking.
+                  <strong>Operación de Salidas de Almacén:</strong> Escanee el código de barras del producto para su salida. Si no tiene registro, la plataforma lo indicará claramente. Si está registrado, <strong>le mostrará en qué posición está físicamente y de qué celda se sugiere extraer</strong> para agilizar el picking.
                 </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1.5 tracking-wider">
-                    Escaneo Código de Barras de Material a Despachar
+                    Escaneo Código de Barras de Material para Salida de Almacén
                   </label>
                   <div className="relative flex items-center">
                     <Scan className="absolute left-3.5 h-4 w-4 text-amber-600" />
@@ -1325,12 +1325,12 @@ export const BarcodeConsole: React.FC<BarcodeConsoleProps> = ({
                 {isProcessing ? (
                   <>
                     <RefreshCw className="h-4 w-4 animate-spin" />
-                    <span>Validando Código y Despachando...</span>
+                    <span>Validando Código y Procesando Salida...</span>
                   </>
                 ) : (
                   <>
                     <ArrowUpRight className="h-4 w-4" />
-                    <span>Escanear y Validar Despacho de Salida</span>
+                    <span>Escanear y Validar Salida de Almacén</span>
                   </>
                 )}
               </button>

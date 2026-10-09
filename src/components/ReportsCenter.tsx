@@ -26,7 +26,9 @@ import {
   Briefcase,
   Database,
   ShieldCheck,
-  Building2
+  Building2,
+  Truck,
+  Sparkles
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { Bin, InventoryItem, Order, ActivityLog, CycleCountSession, WarehouseSection } from '../types';
@@ -40,7 +42,7 @@ interface ReportsCenterProps {
   countedSessions?: CycleCountSession[];
 }
 
-type ActiveReportType = 'performance' | 'inventory' | 'audit_logs' | 'orders_flow' | 'full_backup';
+type ActiveReportType = 'performance' | 'inventory' | 'warehouse_sections' | 'direct_dispatches' | 'audit_logs' | 'orders_flow' | 'full_backup';
 
 function oklchToRgbOrHsl(oklchStr: string): string {
   const match = oklchStr.match(/oklch\(\s*([0-9.]+%?)\s+([0-9.]+)\s+([0-9.]+)(?:\s*\/\s*([0-9.]+%?))?\s*\)/i);
@@ -111,6 +113,39 @@ export default function ReportsCenter({
   }, []);
 
   const [selectedWarehouseFilter, setSelectedWarehouseFilter] = useState<string>('all');
+  const [isCustomWarehouseFilter, setIsCustomWarehouseFilter] = useState<boolean>(false);
+  const [customWarehouseFilterText, setCustomWarehouseFilterText] = useState<string>('');
+
+  // Salidas directas de almacén registradas
+  const [directDispatchesList, setDirectDispatchesList] = useState<any[]>(() => {
+    try {
+      const saved = localStorage.getItem('OWMS_DIRECT_DISPATCH_HISTORY');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return [];
+  });
+
+  useEffect(() => {
+    const handleDispatchesUpdate = () => {
+      try {
+        const saved = localStorage.getItem('OWMS_DIRECT_DISPATCH_HISTORY');
+        if (saved) setDirectDispatchesList(JSON.parse(saved));
+      } catch (e) {}
+    };
+    window.addEventListener('wms_direct_dispatches_updated', handleDispatchesUpdate);
+    return () => window.removeEventListener('wms_direct_dispatches_updated', handleDispatchesUpdate);
+  }, []);
+
+  // Helper to check if a warehouse section matches the current filter
+  const isWarehouseMatch = (wh: WarehouseSection): boolean => {
+    if (selectedWarehouseFilter === 'all') return true;
+    if (selectedWarehouseFilter === '__OTHER__') {
+      const q = customWarehouseFilterText.toLowerCase().trim();
+      if (!q) return true;
+      return wh.name.toLowerCase().includes(q) || wh.code.toLowerCase().includes(q) || wh.sectionType.toLowerCase().includes(q);
+    }
+    return wh.id === selectedWarehouseFilter;
+  };
 
   // Helper to resolve the warehouse section of an SKU
   const getSkuWarehouseSection = (item: InventoryItem): WarehouseSection => {
@@ -157,33 +192,33 @@ export default function ReportsCenter({
   // Filtered datasets based on selected warehouse section
   const filteredInventoryByLine = React.useMemo(() => {
     if (selectedWarehouseFilter === 'all') return inventory;
-    return inventory.filter(item => getSkuWarehouseSection(item).id === selectedWarehouseFilter);
-  }, [inventory, selectedWarehouseFilter, warehouseSections]);
+    return inventory.filter(item => isWarehouseMatch(getSkuWarehouseSection(item)));
+  }, [inventory, selectedWarehouseFilter, customWarehouseFilterText, warehouseSections]);
 
   const filteredBinsByLine = React.useMemo(() => {
     if (selectedWarehouseFilter === 'all') return bins;
     return bins.filter(b => {
       if (b.occupiedSku) {
         const item = inventory.find(i => i.sku === b.occupiedSku);
-        if (item && getSkuWarehouseSection(item).id === selectedWarehouseFilter) return true;
+        if (item && isWarehouseMatch(getSkuWarehouseSection(item))) return true;
       }
       return true;
     });
-  }, [bins, inventory, selectedWarehouseFilter, warehouseSections]);
+  }, [bins, inventory, selectedWarehouseFilter, customWarehouseFilterText, warehouseSections]);
 
   const filteredOrdersByLine = React.useMemo(() => {
     if (selectedWarehouseFilter === 'all') return orders;
     return orders.map(o => {
       const lineItems = o.items.filter(item => {
         const found = inventory.find(i => i.sku === item.sku);
-        return found && getSkuWarehouseSection(found).id === selectedWarehouseFilter;
+        return found && isWarehouseMatch(getSkuWarehouseSection(found));
       });
       return {
         ...o,
         items: lineItems
       };
     }).filter(o => o.items.length > 0);
-  }, [orders, inventory, selectedWarehouseFilter, warehouseSections]);
+  }, [orders, inventory, selectedWarehouseFilter, customWarehouseFilterText, warehouseSections]);
 
   const filteredLogsByLine = React.useMemo(() => {
     if (selectedWarehouseFilter === 'all') return logs;
@@ -193,7 +228,7 @@ export default function ReportsCenter({
       );
       return hasSku;
     });
-  }, [logs, filteredInventoryByLine, selectedWarehouseFilter]);
+  }, [logs, filteredInventoryByLine, selectedWarehouseFilter, customWarehouseFilterText]);
 
   useEffect(() => {
     const fetchRate = async () => {
@@ -320,7 +355,7 @@ export default function ReportsCenter({
     const ws = XLSX.utils.json_to_sheet(
       filteredOrdersByLine.map(order => ({
         'ID Pedido': order.id,
-        'Tipo Flujo': order.type === 'Inbound' ? 'Ingreso (Inbound)' : 'Despacho (Outbound)',
+        'Tipo Flujo': order.type === 'Inbound' ? 'Ingreso (Inbound)' : 'Salida de Almacén (Outbound)',
         'Prioridad': order.priority,
         'Estado Actual': order.status,
         'Fecha de Registro': order.dateCreated,
@@ -332,6 +367,58 @@ export default function ReportsCenter({
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Flujo_Ordenes');
     XLSX.writeFile(wb, `Reporte_Pedidos_WMS_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
+
+  // Export Superalmacenes y Subalmacenes Metrics
+  const handleExportWarehouseSections = () => {
+    const data = warehouseSections.map(wh => {
+      const whItems = inventory.filter(item => getSkuWarehouseSection(item).id === wh.id);
+      const whUnits = whItems.reduce((sum, item) => sum + (item.qty || 0), 0);
+      const whVal = whItems.reduce((sum, item) => sum + ((item.qty || 0) * convertItemCost(item.cost || 0)), 0);
+      const subNames = (wh.subWarehouses || []).map(s => `[${s.code}] ${s.name} (${s.storageType})`).join('; ') || 'Sin subalmacenes asignados';
+      const catNames = Array.from(new Set(whItems.map(i => i.category || 'General'))).join(', ') || 'N/A';
+      return {
+        'Código': wh.code,
+        'Superalmacén / Nombre': wh.name,
+        'Giro / Tipo Sección': wh.sectionType,
+        'Ubicación Física / Nave': wh.facilityLocation,
+        'Estado Operativo': wh.status,
+        'Total Subalmacenes': (wh.subWarehouses || []).length,
+        'Subalmacenes Asignados': subNames,
+        'SKUs Almacenados': whItems.length,
+        'Total Unidades': whUnits,
+        [`Valuación Total (${getCurrencySymbol()})`]: Number(whVal.toFixed(2)),
+        'Categorías Presentes': catNames,
+        'Fecha Alta': wh.createdAt || 'N/A'
+      };
+    });
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Superalmacenes_Metricas');
+    XLSX.writeFile(wb, `Reporte_Superalmacenes_WMS_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
+
+  // Export Salidas Directas de Almacén
+  const handleExportDirectDispatches = () => {
+    const data = directDispatchesList.map(disp => ({
+      'Folio Salida': disp.folio || disp.id,
+      'Fecha y Hora': disp.date || disp.timestamp,
+      'SKU': disp.sku,
+      'Producto': disp.productName || disp.name,
+      'Categoría': disp.category || 'General',
+      'Cantidad de Salida': disp.qty || disp.quantity,
+      [`Costo Unitario (${getCurrencySymbol()})`]: Number(convertItemCost(disp.cost || 0).toFixed(2)),
+      [`Total Valuación (${getCurrencySymbol()})`]: Number(((disp.qty || disp.quantity || 0) * convertItemCost(disp.cost || 0)).toFixed(2)),
+      'Destino / Cliente': disp.destination || disp.client || 'Mostrador / General',
+      'Medio de Entrega': disp.deliveryMethod || disp.method || 'Retiro en Almacén',
+      'Transportista / Conductor': disp.carrier || disp.driver || 'N/A',
+      'Operador Responsable': disp.user || disp.operator || 'Administrador',
+      'Notas / Observaciones': disp.notes || disp.reason || ''
+    }));
+    const ws = XLSX.utils.json_to_sheet(data.length > 0 ? data : [{ 'Aviso': 'No hay salidas directas registradas aún en el sistema' }]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Salidas_Directas');
+    XLSX.writeFile(wb, `Reporte_Salidas_Directas_WMS_${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
   // Full Database Backup Export function (Multi-Sheet Excel)
@@ -359,6 +446,8 @@ export default function ReportsCenter({
       { 'Propiedad / Métrica': 'Total de Pedidos Registrados', 'Valor / Detalle': totalOrdersCount },
       { 'Propiedad / Métrica': 'Pedidos Completados', 'Valor / Detalle': completedOrders },
       { 'Propiedad / Métrica': 'Pedidos Pendientes', 'Valor / Detalle': pendingOrders },
+      { 'Propiedad / Métrica': 'Superalmacenes Configurados', 'Valor / Detalle': warehouseSections.length },
+      { 'Propiedad / Métrica': 'Salidas Directas Registradas', 'Valor / Detalle': directDispatchesList.length },
       { 'Propiedad / Métrica': 'Registros de Auditoría (Logs)', 'Valor / Detalle': filteredLogsByLine.length },
       { 'Propiedad / Métrica': 'Sesiones de Conteo Cíclico', 'Valor / Detalle': countedSessions.length },
       { 'Propiedad / Métrica': 'Comentarios / Notas', 'Valor / Detalle': customNotes || 'Respaldo de seguridad generado desde el Centro de Reportes WMS.' }
@@ -411,14 +500,14 @@ export default function ReportsCenter({
     // 4. Sheet: Orders and Shipments Flow
     const ordersData = filteredOrdersByLine.map(order => ({
       'ID Pedido': order.id,
-      'Tipo de Pedido': order.type === 'Inbound' ? 'Ingreso (Inbound)' : 'Despacho (Outbound)',
+      'Tipo de Pedido': order.type === 'Inbound' ? 'Ingreso (Inbound)' : 'Salida de Almacén (Outbound)',
       'Prioridad': order.priority,
       'Estado': order.status,
       'Fecha Registro': order.dateCreated,
       'Responsable Asignado': order.assignedTo || 'No asignado',
       'Transportista': order.carrier || 'No asignado',
       'Número Rastreo': order.trackingNumber || '',
-      'Fecha Despacho': order.shipmentDate || '',
+      'Fecha Salida': order.shipmentDate || '',
       'Total Unidades': order.items.reduce((sum, i) => sum + i.qty, 0),
       'Detalle Artículos': order.items.map(i => `${i.sku} (Cant: ${i.qty})`).join('; ')
     }));
@@ -450,9 +539,50 @@ export default function ReportsCenter({
       XLSX.utils.book_append_sheet(wb, wsCycle, 'Conteos_Ciclicos');
     }
 
+    // 7. Sheet: Superalmacenes y Subalmacenes
+    const superWhData = warehouseSections.map(wh => {
+      const whItems = inventory.filter(item => getSkuWarehouseSection(item).id === wh.id);
+      const whUnits = whItems.reduce((sum, item) => sum + (item.qty || 0), 0);
+      const whVal = whItems.reduce((sum, item) => sum + ((item.qty || 0) * convertItemCost(item.cost || 0)), 0);
+      const subList = (wh.subWarehouses || []).map(s => `[${s.code}] ${s.name}`).join('; ') || 'Ninguno';
+      return {
+        'Código': wh.code,
+        'Superalmacén': wh.name,
+        'Giro': wh.sectionType,
+        'Ubicación': wh.facilityLocation,
+        'Estado': wh.status,
+        'Cantidad Subalmacenes': (wh.subWarehouses || []).length,
+        'Subalmacenes Detalle': subList,
+        'SKUs en Almacén': whItems.length,
+        'Unidades en Almacén': whUnits,
+        [`Valuación (${getCurrencySymbol()})`]: Number(whVal.toFixed(2))
+      };
+    });
+    const wsSuperWh = XLSX.utils.json_to_sheet(superWhData);
+    XLSX.utils.book_append_sheet(wb, wsSuperWh, 'Superalmacenes_Y_Secciones');
+
+    // 8. Sheet: Salidas Directas de Almacén
+    const directDispData = directDispatchesList.map(disp => ({
+      'Folio': disp.folio || disp.id,
+      'Fecha / Hora': disp.date || disp.timestamp,
+      'SKU': disp.sku,
+      'Producto': disp.productName || disp.name,
+      'Categoría': disp.category || 'General',
+      'Cantidad': disp.qty || disp.quantity,
+      [`Costo Unitario (${getCurrencySymbol()})`]: Number(convertItemCost(disp.cost || 0).toFixed(2)),
+      [`Valuación Total (${getCurrencySymbol()})`]: Number(((disp.qty || disp.quantity || 0) * convertItemCost(disp.cost || 0)).toFixed(2)),
+      'Destino / Cliente': disp.destination || disp.client || 'Mostrador / General',
+      'Medio de Entrega': disp.deliveryMethod || disp.method || 'Retiro en Almacén',
+      'Transportista': disp.carrier || disp.driver || 'N/A',
+      'Operador': disp.user || disp.operator || 'Administrador',
+      'Notas': disp.notes || disp.reason || ''
+    }));
+    const wsDirectDisp = XLSX.utils.json_to_sheet(directDispData.length > 0 ? directDispData : [{ 'Aviso': 'Sin salidas directas registradas' }]);
+    XLSX.utils.book_append_sheet(wb, wsDirectDisp, 'Salidas_Directas_Almacen');
+
     const fileName = `Respaldo_Completo_WMS_${currentDate}.xlsx`;
     XLSX.writeFile(wb, fileName);
-    setBackupSuccessMsg(`Respaldo descargado exitosamente: "${fileName}" con todas las hojas operativas del WMS.`);
+    setBackupSuccessMsg(`Respaldo descargado exitosamente: "${fileName}" con 8 hojas operativas completas del WMS.`);
     setTimeout(() => setBackupSuccessMsg(''), 6000);
   };
 
@@ -516,14 +646,43 @@ export default function ReportsCenter({
           <select
             id="reports-warehouse-filter"
             value={selectedWarehouseFilter}
-            onChange={(e) => setSelectedWarehouseFilter(e.target.value)}
-            className="w-full sm:w-auto px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+            onChange={(e) => {
+              setSelectedWarehouseFilter(e.target.value);
+              setIsCustomWarehouseFilter(e.target.value === '__OTHER__');
+            }}
+            className="w-full sm:w-auto px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 cursor-pointer"
           >
             <option value="all">Todos los Almacenes ({warehouseSections.length})</option>
             {warehouseSections.map(wh => (
               <option key={wh.id} value={wh.id}>[{wh.code}] {wh.name}</option>
             ))}
+            <option value="__OTHER__">➕ Otro Almacén / Sección (especificar de qué se trata...)</option>
           </select>
+
+          {isCustomWarehouseFilter && (
+            <div className="flex items-center gap-1.5 animate-fadeIn">
+              <input
+                type="text"
+                value={customWarehouseFilterText}
+                onChange={(e) => setCustomWarehouseFilterText(e.target.value)}
+                placeholder="Escriba de qué almacén se trata..."
+                className="px-3 py-1.5 bg-indigo-50/70 border border-indigo-300 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                autoFocus
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedWarehouseFilter('all');
+                  setIsCustomWarehouseFilter(false);
+                  setCustomWarehouseFilterText('');
+                }}
+                className="text-xs text-slate-400 hover:text-slate-600 font-bold p-1 cursor-pointer"
+                title="Limpiar filtro personalizado"
+              >
+                ✕
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Separador vertical en pantallas grandes */}
@@ -624,7 +783,7 @@ export default function ReportsCenter({
                 <div className="space-y-1">
                   <span className="font-bold text-slate-900 text-xs block">1. Reporte Operativo y Métricas</span>
                   <p className="text-[10px] text-slate-500 leading-relaxed font-medium">
-                    Eficiencia global, ocupación física de celdas, estadísticas de despacho y estado del inventario.
+                    Eficiencia global, ocupación física de celdas, estadísticas de salidas de almacén y estado del inventario.
                   </p>
                 </div>
               </button>
@@ -664,7 +823,7 @@ export default function ReportsCenter({
                 <div className="space-y-1">
                   <span className="font-bold text-slate-900 text-xs block">3. Auditoría e Historial de Operaciones</span>
                   <p className="text-[10px] text-slate-500 leading-relaxed font-medium">
-                    Trazabilidad de movimientos físicos de stock, ingresos, picking, despacho y auditorías físicas completadas.
+                    Trazabilidad de movimientos físicos de stock, ingresos, picking, salidas de almacén y auditorías físicas completadas.
                   </p>
                 </div>
               </button>
@@ -684,12 +843,62 @@ export default function ReportsCenter({
                 <div className="space-y-1">
                   <span className="font-bold text-slate-900 text-xs block">4. Flujo de Pedidos (Inbound / Outbound)</span>
                   <p className="text-[10px] text-slate-500 leading-relaxed font-medium">
-                    Consolidado de órdenes de compra y venta, tasas de despacho, prioridades operativas y transportistas.
+                    Consolidado de órdenes de compra y venta, tasas de salidas de almacén, prioridades operativas y transportistas.
                   </p>
                 </div>
               </button>
 
-              {/* Report 5: Full System Backup (Multi-Sheet Excel) */}
+              {/* Report 5: Warehouse Sections & Categories */}
+              <button
+                onClick={() => setSelectedReport('warehouse_sections')}
+                className={`w-full text-left p-4 rounded-xl border transition-all flex items-start gap-3.5 ${
+                  selectedReport === 'warehouse_sections' 
+                    ? 'bg-indigo-50/50 border-indigo-200 ring-2 ring-indigo-500/10' 
+                    : 'border-slate-150 hover:bg-slate-50/70 hover:border-slate-250'
+                }`}
+              >
+                <div className={`p-2 rounded-lg shrink-0 ${selectedReport === 'warehouse_sections' ? 'bg-indigo-600 text-white' : 'bg-indigo-100 text-indigo-700'}`}>
+                  <Building2 className="h-5 w-5" />
+                </div>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-slate-900 text-xs block">5. Superalmacenes, Subalmacenes y Categorías</span>
+                    <span className="text-[9px] font-mono font-bold bg-indigo-100 text-indigo-800 px-1.5 py-0.2 rounded uppercase">
+                      Estructura
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-slate-500 leading-relaxed font-medium">
+                    Desglose por Superalmacén (OXXO, Construcción, etc.), subalmacenes, capacidades, ocupación, capital en stock y categorías asignadas.
+                  </p>
+                </div>
+              </button>
+
+              {/* Report 6: Direct Dispatches / Express */}
+              <button
+                onClick={() => setSelectedReport('direct_dispatches')}
+                className={`w-full text-left p-4 rounded-xl border transition-all flex items-start gap-3.5 ${
+                  selectedReport === 'direct_dispatches' 
+                    ? 'bg-amber-50/60 border-amber-300 ring-2 ring-amber-500/20' 
+                    : 'border-slate-150 hover:bg-amber-50/30 hover:border-amber-250'
+                }`}
+              >
+                <div className={`p-2 rounded-lg shrink-0 ${selectedReport === 'direct_dispatches' ? 'bg-amber-600 text-white' : 'bg-amber-100 text-amber-700'}`}>
+                  <Truck className="h-5 w-5" />
+                </div>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-slate-900 text-xs block">6. Salidas Directas de Almacén</span>
+                    <span className="text-[9px] font-mono font-bold bg-amber-100 text-amber-800 px-1.5 py-0.2 rounded uppercase">
+                      Inmediatas
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-slate-500 leading-relaxed font-medium">
+                    Historial de mercancía con salida directa de almacén sin orden previa: folios, SKUs, medios de entrega, transportistas y destinos.
+                  </p>
+                </div>
+              </button>
+
+              {/* Report 7: Full System Backup (Multi-Sheet Excel) */}
               <button
                 onClick={() => setSelectedReport('full_backup')}
                 className={`w-full text-left p-4 rounded-xl border transition-all flex items-start gap-3.5 ${
@@ -703,13 +912,13 @@ export default function ReportsCenter({
                 </div>
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
-                    <span className="font-bold text-slate-900 text-xs block">5. Respaldo Completo del Sistema</span>
+                    <span className="font-bold text-slate-900 text-xs block">7. Respaldo Completo del Sistema</span>
                     <span className="text-[9px] font-mono font-bold bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded uppercase">
-                      Multi-Hoja
+                      8 Hojas
                     </span>
                   </div>
                   <p className="text-[10px] text-slate-500 leading-relaxed font-medium">
-                    Copia de seguridad integral en Excel (.xlsx) con 6 pestañas: resumen, inventario, celdas, pedidos, auditoría y conteos.
+                    Copia de seguridad integral en Excel (.xlsx) con 8 pestañas: resumen, inventario, celdas, pedidos, auditoría, conteos, superalmacenes y salidas directas.
                   </p>
                 </div>
               </button>
@@ -806,13 +1015,13 @@ export default function ReportsCenter({
                 <div className="space-y-4">
                   <h4 className="text-sm font-extrabold text-slate-800">Libro General de Pedidos y Entregas</h4>
                   <p className="text-xs text-slate-500 leading-relaxed">
-                    Concentrado global de todas las transacciones de mercadería del almacén en sus dos variantes: Compras (Inbound) y Despachos de Venta (Outbound).
+                    Concentrado global de todas las transacciones de mercadería del almacén en sus dos variantes: Compras (Inbound) y Salidas de Almacén (Outbound).
                   </p>
                   <ul className="text-xs text-slate-600 space-y-2 list-disc pl-5 font-semibold">
                     <li>ID de Orden, Tipo y fecha de registro original.</li>
                     <li>Nivel de Prioridad en bodega (Low, Medium, High, Critical).</li>
                     <li>Estado de Fulfillment (Completado, Pendiente, Picking).</li>
-                    <li>Detalles de transportistas, guías de despacho y productos asociados.</li>
+                    <li>Detalles de transportistas, guías de salida y productos asociados.</li>
                   </ul>
 
                   <div className="p-4 bg-slate-50 rounded-xl border border-slate-150 flex items-center justify-between gap-4 mt-2">
@@ -820,6 +1029,84 @@ export default function ReportsCenter({
                       <span className="text-[10px] uppercase font-bold text-slate-400 block font-mono">Pedidos en Sistema</span>
                       <span className="text-xs font-bold text-slate-700 block">
                         Órdenes Registradas: <strong className="text-slate-900">{totalOrdersCount}</strong> | Completadas: <strong className="text-emerald-600">{completedOrders}</strong> | Pendientes: <strong className="text-amber-600">{pendingOrders}</strong>
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {selectedReport === 'warehouse_sections' && (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1.5 bg-indigo-100 text-indigo-700 rounded-lg">
+                      <Building2 className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-extrabold text-slate-800">Reporte de Superalmacenes, Subalmacenes y Categorías</h4>
+                      <span className="text-[10px] font-mono text-indigo-600 font-bold">Estructura Organizacional Logística WMS</span>
+                    </div>
+                  </div>
+
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    Consolidado ejecutivo de los Superalmacenes activos (OXXO, Construcción, Transporte, etc.), su distribución física en subalmacenes, nivel de ocupación, unidades almacenadas, valuación financiera y categorías asignadas (incluyendo creadas con opción &quot;Otro&quot;).
+                  </p>
+                  <ul className="text-xs text-slate-600 space-y-2 list-disc pl-5 font-semibold">
+                    <li>Código y denominación de cada Superalmacén con tipo de giro operativo.</li>
+                    <li>Listado detallado de subalmacenes vinculados y tipos de almacenamiento.</li>
+                    <li>Total de SKUs y unidades almacenadas físicamente.</li>
+                    <li>Valuación total del inventario segmentado por almacén.</li>
+                  </ul>
+
+                  <div className="p-4 bg-indigo-50/60 rounded-xl border border-indigo-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mt-2">
+                    <div className="space-y-1">
+                      <span className="text-[10px] uppercase font-bold text-indigo-900 block font-mono">Resumen de Secciones</span>
+                      <span className="text-xs font-bold text-slate-700 block">
+                        Superalmacenes: <strong className="text-slate-900">{warehouseSections.length}</strong> | Subalmacenes Totales: <strong className="text-indigo-700">{warehouseSections.reduce((s, w) => s + (w.subWarehouses?.length || 0), 0)}</strong>
+                      </span>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-[10px] uppercase font-bold text-slate-400 block font-mono">Capital Evaluado</span>
+                      <span className="text-xs font-mono font-black text-emerald-700">
+                        {getCurrencySymbol()}{totalInventoryValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {selectedReport === 'direct_dispatches' && (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1.5 bg-amber-100 text-amber-800 rounded-lg">
+                      <Truck className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-extrabold text-slate-800">Reporte de Salidas Directas de Almacén</h4>
+                      <span className="text-[10px] font-mono text-amber-700 font-bold">Salidas Inmediatas de Almacén sin Orden Previa</span>
+                    </div>
+                  </div>
+
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    Trazabilidad de mercancía retirada de forma ágil desde el mostrador, ventas al paso o salidas de emergencia. Incluye medios de transporte, transportistas y destinos atendidos (con soportes para medios personalizados creados con &quot;Otro&quot;).
+                  </p>
+                  <ul className="text-xs text-slate-600 space-y-2 list-disc pl-5 font-semibold">
+                    <li>Folio de salida, fecha, hora y operador que autorizó el movimiento.</li>
+                    <li>SKU entregado, descripción del artículo, cantidad física y costo unitario.</li>
+                    <li>Medio de transporte logístico y transportista asignado.</li>
+                    <li>Destino o cliente receptor final con notas u observaciones.</li>
+                  </ul>
+
+                  <div className="p-4 bg-amber-50/60 rounded-xl border border-amber-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mt-2">
+                    <div className="space-y-1">
+                      <span className="text-[10px] uppercase font-bold text-amber-900 block font-mono">Registro de Salidas</span>
+                      <span className="text-xs font-bold text-slate-700 block">
+                        Salidas Realizadas: <strong className="text-slate-900">{directDispatchesList.length}</strong> | Unidades con Salida: <strong className="text-amber-800">{directDispatchesList.reduce((sum, d) => sum + (d.qty || d.quantity || 0), 0).toLocaleString()}</strong>
+                      </span>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-[10px] uppercase font-bold text-slate-400 block font-mono">Valor Total en Salidas</span>
+                      <span className="text-xs font-mono font-black text-amber-800">
+                        {getCurrencySymbol()}{directDispatchesList.reduce((sum, d) => sum + ((d.qty || d.quantity || 0) * convertItemCost(d.cost || 0)), 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
                     </div>
                   </div>
@@ -834,7 +1121,7 @@ export default function ReportsCenter({
                     </div>
                     <div>
                       <h4 className="text-sm font-extrabold text-slate-800">Respaldo Integral de Base de Datos WMS</h4>
-                      <span className="text-[10px] font-mono text-emerald-600 font-bold">Libro de Excel (.xlsx) con 6 Hojas Completas</span>
+                      <span className="text-[10px] font-mono text-emerald-600 font-bold">Libro de Excel (.xlsx) con 8 Hojas Completas</span>
                     </div>
                   </div>
 
@@ -842,7 +1129,7 @@ export default function ReportsCenter({
                     Este proceso extrae y consolida en un único archivo Excel todas las entidades de la base de datos de almacenamiento, ideal para copias de seguridad de auditoría fiscal, resguardo ante contingencias o análisis externo.
                   </p>
 
-                  {/* 6 Sheets Summary Grid */}
+                  {/* 8 Sheets Summary Grid */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
                     <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1">
                       <div className="flex items-center justify-between">
@@ -850,7 +1137,7 @@ export default function ReportsCenter({
                           <FileText className="h-3.5 w-3.5 text-indigo-500" />
                           1. Resumen_General
                         </span>
-                        <span className="text-[9px] bg-slate-200/70 text-slate-600 font-bold px-1.5 py-0.5 rounded font-mono">19 KPIs</span>
+                        <span className="text-[9px] bg-slate-200/70 text-slate-600 font-bold px-1.5 py-0.5 rounded font-mono">21 KPIs</span>
                       </div>
                       <p className="text-[10px] text-slate-500 leading-tight">Metadatos, valuación monetaria, ocupación y configuración.</p>
                     </div>
@@ -909,6 +1196,28 @@ export default function ReportsCenter({
                       </div>
                       <p className="text-[10px] text-slate-500 leading-tight">Sesiones de conteo físico, stock en sistema y desviaciones.</p>
                     </div>
+
+                    <div className="p-3 bg-indigo-50/70 rounded-xl border border-indigo-200 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-indigo-900 flex items-center gap-1.5 font-mono">
+                          <Building2 className="h-3.5 w-3.5 text-indigo-600" />
+                          7. Superalmacenes
+                        </span>
+                        <span className="text-[9px] bg-indigo-200 text-indigo-800 font-bold px-1.5 py-0.5 rounded font-mono">{warehouseSections.length} almacenes</span>
+                      </div>
+                      <p className="text-[10px] text-slate-500 leading-tight">Giro, ubicación, subalmacenes, SKUs y capital almacenado.</p>
+                    </div>
+
+                    <div className="p-3 bg-amber-50/70 rounded-xl border border-amber-200 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-amber-900 flex items-center gap-1.5 font-mono">
+                          <Truck className="h-3.5 w-3.5 text-amber-600" />
+                          8. Salidas_Directas
+                        </span>
+                        <span className="text-[9px] bg-amber-200 text-amber-800 font-bold px-1.5 py-0.5 rounded font-mono">{directDispatchesList.length} salidas</span>
+                      </div>
+                      <p className="text-[10px] text-slate-500 leading-tight">Salidas directas, medios de transporte, destinos y costos.</p>
+                    </div>
                   </div>
 
                   <div className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl flex items-center justify-between text-xs font-semibold text-emerald-900 mt-1">
@@ -942,11 +1251,15 @@ export default function ReportsCenter({
                   else if (selectedReport === 'inventory') handleExportInventory();
                   else if (selectedReport === 'audit_logs') handleExportLogs();
                   else if (selectedReport === 'orders_flow') handleExportOrders();
+                  else if (selectedReport === 'warehouse_sections') handleExportWarehouseSections();
+                  else if (selectedReport === 'direct_dispatches') handleExportDirectDispatches();
                   else if (selectedReport === 'full_backup') handleExportFullBackup();
                 }}
                 className={`flex-1 text-white font-extrabold text-xs py-3 px-4 rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95 ${
                   selectedReport === 'full_backup'
                     ? 'bg-emerald-600 hover:bg-emerald-700 ring-2 ring-emerald-500/20'
+                    : selectedReport === 'direct_dispatches'
+                    ? 'bg-amber-600 hover:bg-amber-700'
                     : 'bg-emerald-600 hover:bg-emerald-700'
                 }`}
               >
@@ -954,6 +1267,16 @@ export default function ReportsCenter({
                   <>
                     <Database className="h-4.5 w-4.5" />
                     Descargar Respaldo Completo en Excel (.xlsx)
+                  </>
+                ) : selectedReport === 'warehouse_sections' ? (
+                  <>
+                    <Building2 className="h-4.5 w-4.5" />
+                    Descargar Métricas de Superalmacenes en Excel (.xlsx)
+                  </>
+                ) : selectedReport === 'direct_dispatches' ? (
+                  <>
+                    <Truck className="h-4.5 w-4.5" />
+                    Descargar Historial de Salidas Directas en Excel (.xlsx)
                   </>
                 ) : (
                   <>
@@ -1288,7 +1611,7 @@ export default function ReportsCenter({
                         {filteredOrdersByLine.length > 15 && (
                           <tr>
                             <td colSpan={7} className="py-3 px-3 text-center text-slate-400 font-mono text-[9px] font-bold bg-slate-50/50">
-                              ... y otros {filteredOrdersByLine.length - 15} pedidos de despacho.
+                              ... y otros {filteredOrdersByLine.length - 15} pedidos de salida.
                             </td>
                           </tr>
                         )}

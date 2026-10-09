@@ -390,6 +390,8 @@ export const WarehouseSectionManager: React.FC<WarehouseSectionManagerProps> = (
   const [whStatus, setWhStatus] = useState<'Activo' | 'Inactivo'>('Activo');
   const [whCategories, setWhCategories] = useState<string[]>([]);
   const [newWhCatInput, setNewWhCatInput] = useState('');
+  const [isCustomSectionType, setIsCustomSectionType] = useState(false);
+  const [customSectionTypeInput, setCustomSectionTypeInput] = useState('');
 
   // Modal states: SubWarehouse (Alta / Editar)
   const [isSubWarehouseModalOpen, setIsSubWarehouseModalOpen] = useState(false);
@@ -398,6 +400,8 @@ export const WarehouseSectionManager: React.FC<WarehouseSectionManagerProps> = (
   const [subName, setSubName] = useState('');
   const [subCode, setSubCode] = useState('');
   const [subStorageType, setSubStorageType] = useState('Racks Estándar');
+  const [isCustomStorageType, setIsCustomStorageType] = useState(false);
+  const [customStorageTypeInput, setCustomStorageTypeInput] = useState('');
   const [subCapacity, setSubCapacity] = useState<number>(1000);
   const [subOccupancy, setSubOccupancy] = useState<number>(0);
   const [subLocationArea, setSubLocationArea] = useState('');
@@ -1340,14 +1344,56 @@ export const WarehouseSectionManager: React.FC<WarehouseSectionManagerProps> = (
                     Giro / Tipo de Sección *
                   </label>
                   <select
-                    value={whSectionType}
-                    onChange={(e) => setWhSectionType(e.target.value)}
+                    value={isCustomSectionType ? '__OTHER__' : whSectionType}
+                    onChange={(e) => {
+                      if (e.target.value === '__OTHER__') {
+                        setIsCustomSectionType(true);
+                      } else {
+                        setIsCustomSectionType(false);
+                        setWhSectionType(e.target.value);
+                      }
+                    }}
                     className="w-full text-xs font-semibold rounded-xl border border-slate-300 p-2.5 text-slate-800 focus:border-blue-500 focus:outline-none"
                   >
                     {SECTION_TYPES.map(st => (
                       <option key={st} value={st}>{st}</option>
                     ))}
+                    <option value="__OTHER__">➕ Otro Giro / Sección (especificar de qué se trata...)</option>
                   </select>
+
+                  {isCustomSectionType && (
+                    <div className="mt-1.5 p-2 bg-indigo-50 border border-indigo-200 rounded-lg space-y-1 animate-fadeIn">
+                      <span className="text-[9.5px] font-bold text-indigo-900 block font-mono">
+                        ✏️ ¿De qué se trata el nuevo Giro / Sección?
+                      </span>
+                      <div className="flex gap-1.5">
+                        <input
+                          type="text"
+                          value={customSectionTypeInput}
+                          onChange={(e) => {
+                            setCustomSectionTypeInput(e.target.value);
+                            if (e.target.value.trim()) {
+                              setWhSectionType(e.target.value.trim());
+                            }
+                          }}
+                          placeholder="Escriba aquí de qué se trata..."
+                          className="grow text-xs font-bold p-1 bg-white border border-indigo-300 rounded text-slate-800 focus:outline-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (customSectionTypeInput.trim()) {
+                              setWhSectionType(customSectionTypeInput.trim());
+                              setIsCustomSectionType(false);
+                            }
+                          }}
+                          className="px-2 py-1 bg-indigo-600 text-white font-bold text-[10px] rounded cursor-pointer"
+                        >
+                          Aplicar
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div>
@@ -1614,14 +1660,56 @@ export const WarehouseSectionManager: React.FC<WarehouseSectionManagerProps> = (
                     Tipo de Almacenamiento *
                   </label>
                   <select
-                    value={subStorageType}
-                    onChange={(e) => setSubStorageType(e.target.value)}
+                    value={isCustomStorageType ? '__OTHER__' : subStorageType}
+                    onChange={(e) => {
+                      if (e.target.value === '__OTHER__') {
+                        setIsCustomStorageType(true);
+                      } else {
+                        setIsCustomStorageType(false);
+                        setSubStorageType(e.target.value);
+                      }
+                    }}
                     className="w-full text-xs font-semibold rounded-xl border border-slate-300 p-2.5 text-slate-800 focus:border-indigo-500 focus:outline-none"
                   >
                     {STORAGE_TYPES.map(st => (
                       <option key={st} value={st}>{st}</option>
                     ))}
+                    <option value="__OTHER__">➕ Otro Tipo de Almacenamiento (especificar de qué se trata...)</option>
                   </select>
+
+                  {isCustomStorageType && (
+                    <div className="mt-1.5 p-2 bg-indigo-50 border border-indigo-200 rounded-lg space-y-1 animate-fadeIn">
+                      <span className="text-[9.5px] font-bold text-indigo-900 block font-mono">
+                        ✏️ ¿De qué se trata el nuevo Tipo de Almacenamiento?
+                      </span>
+                      <div className="flex gap-1.5">
+                        <input
+                          type="text"
+                          value={customStorageTypeInput}
+                          onChange={(e) => {
+                            setCustomStorageTypeInput(e.target.value);
+                            if (e.target.value.trim()) {
+                              setSubStorageType(e.target.value.trim());
+                            }
+                          }}
+                          placeholder="Escriba aquí de qué se trata..."
+                          className="grow text-xs font-bold p-1 bg-white border border-indigo-300 rounded text-slate-800 focus:outline-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (customStorageTypeInput.trim()) {
+                              setSubStorageType(customStorageTypeInput.trim());
+                              setIsCustomStorageType(false);
+                            }
+                          }}
+                          className="px-2 py-1 bg-indigo-600 text-white font-bold text-[10px] rounded cursor-pointer"
+                        >
+                          Aplicar
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div>

@@ -20,8 +20,10 @@ export const OrdersManager: React.FC<OrdersProps> = ({
   onCompleteOrder
 }) => {
   const [showCreateForm, setShowCreateForm] = useState(false);
-  const [orderType, setOrderType] = useState<'Inbound' | 'Outbound'>('Outbound');
-  const [priority, setPriority] = useState<'Low' | 'Medium' | 'High' | 'Critical'>('Medium');
+  const [orderType, setOrderType] = useState<string>('Outbound');
+  const [customOrderType, setCustomOrderType] = useState<string>('');
+  const [priority, setPriority] = useState<string>('Medium');
+  const [customPriority, setCustomPriority] = useState<string>('');
   const [assignedTo, setAssignedTo] = useState('Alex Mercer');
   const [orderItems, setOrderItems] = useState<{ sku: string; qty: number }[]>([{ sku: '', qty: 5 }]);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
@@ -30,6 +32,7 @@ export const OrdersManager: React.FC<OrdersProps> = ({
 
   // Shipping details state
   const [carrier, setCarrier] = useState('FedEx');
+  const [customCarrier, setCustomCarrier] = useState<string>('');
   const [trackingNumber, setTrackingNumber] = useState('');
   const [shipmentDate, setShipmentDate] = useState(() => new Date().toISOString().split('T')[0]);
 
@@ -94,10 +97,12 @@ export const OrdersManager: React.FC<OrdersProps> = ({
 
     try {
       setIsBusy(true);
+      const effectiveType = orderType === '__OTHER__' ? (customOrderType.trim() || 'Personalizado') : orderType;
+      const effectivePriority = priority === '__OTHER__' ? (customPriority.trim() || 'Normal') : priority;
       await onCreateOrder({
-        id: `ORD-${typeShortCode(orderType)}-${Math.floor(Date.now() / 1000).toString().substring(5)}`,
-        type: orderType,
-        priority,
+        id: `ORD-${typeShortCode(effectiveType)}-${Math.floor(Date.now() / 1000).toString().substring(5)}`,
+        type: effectiveType,
+        priority: effectivePriority,
         status: 'Pending',
         dateCreated: new Date().toISOString(),
         items: filteredItems,
@@ -105,6 +110,8 @@ export const OrdersManager: React.FC<OrdersProps> = ({
       });
       setShowCreateForm(false);
       setOrderItems([{ sku: '', qty: 5 }]);
+      setCustomOrderType('');
+      setCustomPriority('');
     } catch (err) {
       console.error(err);
     } finally {
@@ -135,8 +142,10 @@ export const OrdersManager: React.FC<OrdersProps> = ({
     if (!selectedOrderId) return;
     try {
       setIsBusy(true);
-      await onCompleteOrder(selectedOrderId, shipmentDate, carrier, trackingNumber);
+      const effectiveCarrier = carrier === '__OTHER__' ? (customCarrier.trim() || 'Personalizado') : carrier;
+      await onCompleteOrder(selectedOrderId, shipmentDate, effectiveCarrier, trackingNumber);
       setShowConfirmModal(false);
+      setCustomCarrier('');
     } catch (err) {
       console.error(err);
     } finally {
@@ -155,7 +164,7 @@ export const OrdersManager: React.FC<OrdersProps> = ({
             Flujo de Órdenes Operativas
           </h2>
           <p className="text-xs text-slate-400">
-            Despache listas de surtido (picking), organice entregas de entrada y trace líneas de recorrido activas.
+            Procese listas de surtido (picking), organice entregas de entrada y salidas de almacén activas.
           </p>
         </div>
         {!showCreateForm && (
@@ -187,9 +196,23 @@ export const OrdersManager: React.FC<OrdersProps> = ({
                 onChange={(e: any) => setOrderType(e.target.value)}
                 className="w-full text-xs font-semibold rounded-lg border border-slate-200 bg-white p-2.5 text-slate-700 focus:border-blue-500 focus:outline-none"
               >
-                <option value="Outbound">Salida (Outbound - Surtido/Despacho)</option>
+                <option value="Outbound">Salida de Almacén (Outbound - Surtido/Salida)</option>
                 <option value="Inbound">Entrada (Inbound - Reabastecimiento)</option>
+                <option value="__OTHER__">➕ Otro (especificar de qué se trata...)</option>
               </select>
+              {orderType === '__OTHER__' && (
+                <div className="mt-1.5 p-2 bg-blue-50/70 border border-blue-200 rounded-lg space-y-1 animate-fadeIn">
+                  <span className="text-[9px] font-mono font-bold text-blue-900 block">✏️ Especifique el Tipo de Orden:</span>
+                  <input
+                    type="text"
+                    value={customOrderType}
+                    onChange={(e) => setCustomOrderType(e.target.value)}
+                    placeholder="Ej. Transferencia interna, Devolución de cliente..."
+                    className="w-full text-xs font-semibold p-1.5 bg-white border border-blue-300 rounded text-slate-800 focus:outline-none"
+                    required
+                  />
+                </div>
+              )}
             </div>
 
             <div>
@@ -203,7 +226,21 @@ export const OrdersManager: React.FC<OrdersProps> = ({
                 <option value="Medium">Prioridad Media</option>
                 <option value="High">Prioridad Alta (Urgente)</option>
                 <option value="Critical">Crítica (Emergencia)</option>
+                <option value="__OTHER__">➕ Otro (especificar de qué se trata...)</option>
               </select>
+              {priority === '__OTHER__' && (
+                <div className="mt-1.5 p-2 bg-blue-50/70 border border-blue-200 rounded-lg space-y-1 animate-fadeIn">
+                  <span className="text-[9px] font-mono font-bold text-blue-900 block">✏️ Especifique el Nivel de Prioridad:</span>
+                  <input
+                    type="text"
+                    value={customPriority}
+                    onChange={(e) => setCustomPriority(e.target.value)}
+                    placeholder="Ej. Muestra comercial, Garantía prioritaria..."
+                    className="w-full text-xs font-semibold p-1.5 bg-white border border-blue-300 rounded text-slate-800 focus:outline-none"
+                    required
+                  />
+                </div>
+              )}
             </div>
 
             <div>
@@ -275,7 +312,7 @@ export const OrdersManager: React.FC<OrdersProps> = ({
               className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wider flex items-center gap-2"
             >
               {isBusy && <Loader2 className="h-4 w-4 animate-spin" />}
-              Despachar Flujo de Orden
+              Procesar Salida de Almacén
             </button>
           </div>
         </form>
@@ -391,7 +428,7 @@ export const OrdersManager: React.FC<OrdersProps> = ({
                   <th className="pb-3 text-left">ID DE ARCHIVO</th>
                   <th className="pb-3 text-left">ESTADO DE OPERACIÓN</th>
                   <th className="pb-3 text-left">OPERADOR ASIGNADO</th>
-                  <th className="pb-3 text-right">FECHA Y HORA DE DESPACHO</th>
+                  <th className="pb-3 text-right">FECHA Y HORA DE SALIDA</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50 text-xs">
@@ -457,7 +494,7 @@ export const OrdersManager: React.FC<OrdersProps> = ({
               <div className="flex items-center gap-2 text-blue-500 mb-4 border-b border-slate-50 pb-3">
                 <ShieldAlert className="h-5 w-5 text-blue-500" />
                 <h4 className="font-bold text-slate-800 text-sm leading-none">
-                  Confirmación de Despacho WMS (Orden: {order.id})
+                  Confirmación de Salida de Almacén WMS (Orden: {order.id})
                 </h4>
               </div>
 
@@ -486,7 +523,7 @@ export const OrdersManager: React.FC<OrdersProps> = ({
                 </div>
                 {hasInsufficientStock && (
                   <div className="bg-rose-50 border border-rose-100 rounded-xl p-3 text-rose-700 text-[10px] font-semibold leading-relaxed">
-                    ⚠️ Error: No hay suficiente stock en el almacén para cumplir con este despacho. Ajuste los niveles de stock o complete recepciones manuales de inventario antes de archivar esta orden.
+                    ⚠️ Error: No hay suficiente stock en el almacén para cumplir con esta salida. Ajuste los niveles de stock o complete recepciones manuales de inventario antes de archivar esta orden.
                   </div>
                 )}
               </div>
@@ -518,7 +555,21 @@ export const OrdersManager: React.FC<OrdersProps> = ({
                       <option value="UPS Services">Servicios de UPS</option>
                       <option value="Correos Express">Correos Express</option>
                       <option value="Local Courier">Mensajería Local</option>
+                      <option value="__OTHER__">➕ Otro (especificar de qué se trata...)</option>
                     </select>
+                    {carrier === '__OTHER__' && (
+                      <div className="mt-1 p-1.5 bg-blue-50/70 border border-blue-200 rounded-lg space-y-0.5 animate-fadeIn">
+                        <span className="text-[9px] font-mono font-bold text-blue-900 block">✏️ Especifique el Transportista:</span>
+                        <input
+                          type="text"
+                          value={customCarrier}
+                          onChange={(e) => setCustomCarrier(e.target.value)}
+                          placeholder="Ej. Tres Guerras, Castores, Estafeta..."
+                          className="w-full text-[10px] font-sans font-semibold border border-blue-300 p-1.5 rounded text-slate-800 bg-white focus:outline-none"
+                          required
+                        />
+                      </div>
+                    )}
                   </div>
 
                   <div>
@@ -547,7 +598,7 @@ export const OrdersManager: React.FC<OrdersProps> = ({
                   type="button"
                   onClick={async () => {
                     if (hasInsufficientStock) {
-                      alert("Error: Stock insuficiente. No se puede despachar la orden.");
+                      alert("Error: Stock insuficiente. No se puede procesar la salida de la orden.");
                       return;
                     }
                     if (!trackingNumber.trim()) {

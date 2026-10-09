@@ -503,9 +503,25 @@ export function AlertsManager({ inventory, bins }: AlertsManagerProps) {
                   <option value="bin_weight">Resistencia de Estructura (Peso kg)</option>
                   <option value="bin_volume">Capacidad de Celda (% Volumen)</option>
                   <option value="expiration">Vencimiento del Lote (Días)</option>
-                  <option value="custom">Notificación Informativa / Manual</option>
+                  <option value="custom">➕ Otro / Condición Especial (especificar de qué se trata...)</option>
                 </select>
               </div>
+
+              {type === 'custom' && (
+                <div className="p-2.5 bg-indigo-50/70 border border-indigo-200 rounded-xl space-y-1 animate-fadeIn">
+                  <span className="text-[10px] font-mono font-bold text-indigo-900 block uppercase">
+                    ✏️ ¿De qué se trata la condición o alerta personalizada?
+                  </span>
+                  <input
+                    type="text"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    placeholder="Describa aquí la regla o evento a monitorear..."
+                    className="w-full px-3 py-1.5 bg-white border border-indigo-300 rounded-lg text-xs font-bold text-slate-800 focus:outline-none"
+                    required
+                  />
+                </div>
+              )}
 
               {/* Condicional para SKU / Producto */}
               {(type === 'stock_level' || type === 'expiration') && (

@@ -82,6 +82,7 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
   const [quantity, setQuantity] = useState<number>(1);
   const [destination, setDestination] = useState<string>('');
   const [deliveryMethod, setDeliveryMethod] = useState<string>('Reparto Local (Unidad Propia)');
+  const [customDeliveryMethodText, setCustomDeliveryMethodText] = useState<string>('');
   const [trackingNumber, setTrackingNumber] = useState<string>('');
   const [notes, setNotes] = useState<string>('');
 
@@ -109,6 +110,7 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
   useEffect(() => {
     try {
       localStorage.setItem('OWMS_DIRECT_DISPATCH_HISTORY', JSON.stringify(dispatchHistory));
+      window.dispatchEvent(new Event('wms_direct_dispatches_updated'));
     } catch (e) {}
   }, [dispatchHistory]);
 
@@ -121,7 +123,8 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
     'Sucursal Norte',
     'Centro de Distribución',
     'Envío a Domicilio',
-    'Ruta Local Express'
+    'Ruta Local Express',
+    'Otro (especificar...)'
   ];
 
   // Delivery methods options
@@ -160,6 +163,13 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
       desc: 'Envío prioritario express en el día',
       icon: Navigation,
       badge: 'Express'
+    },
+    {
+      id: '__OTHER__',
+      label: 'Otro Medio de Entrega',
+      desc: 'Especifique medio de transporte personalizado',
+      icon: Sparkles,
+      badge: 'Personalizado'
     }
   ];
 
@@ -266,12 +276,12 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
   // Execute Dispatch
   const handleProcessDispatch = async () => {
     if (!selectedProduct) {
-      setFeedback({ type: 'err', text: 'Por favor, seleccione o escanee primero un producto para despachar.' });
+      setFeedback({ type: 'err', text: 'Por favor, seleccione o escanee primero un producto para registrar la salida.' });
       return;
     }
 
     if (quantity <= 0) {
-      setFeedback({ type: 'err', text: 'La cantidad a despachar debe ser mayor a 0.' });
+      setFeedback({ type: 'err', text: 'La cantidad para la salida debe ser mayor a 0.' });
       return;
     }
 
@@ -297,11 +307,15 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
       setIsProcessing(true);
       setFeedback(null);
 
+      const effectiveDeliveryMethod = deliveryMethod === '__OTHER__'
+        ? (customDeliveryMethodText.trim() ? `Otro: ${customDeliveryMethodText.trim()}` : 'Otro (Personalizado)')
+        : deliveryMethod;
+
       const result = await onDirectDispatch({
         sku: selectedProduct.sku,
         qty: quantity,
         destination: destination.trim(),
-        deliveryMethod,
+        deliveryMethod: effectiveDeliveryMethod,
         trackingNumber: trackingNumber.trim() || undefined,
         notes: notes.trim() || undefined
       });
@@ -321,7 +335,7 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
           qty: quantity,
           originBins: usedBins,
           destination: destination.trim(),
-          deliveryMethod,
+          deliveryMethod: effectiveDeliveryMethod,
           trackingNumber: trackingNumber.trim() || undefined,
           notes: notes.trim() || undefined,
           operator: activeOperator ? activeOperator.name : 'Administrador de Logística',
@@ -337,19 +351,20 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
         setSelectedSku('');
         setQuantity(1);
         setDestination('');
+        setCustomDeliveryMethodText('');
         setTrackingNumber('');
         setNotes('');
         setBarcodeInput('');
 
         setFeedback({
           type: 'ok',
-          text: `¡Salida despachada con éxito! Folio generado: ${newRecord.id}`
+          text: `¡Salida de almacén registrada con éxito! Folio generado: ${newRecord.id}`
         });
       }
     } catch (err: any) {
       setFeedback({
         type: 'err',
-        text: `Error al procesar el despacho: ${err?.message || 'Error del sistema'}`
+        text: `Error al procesar la salida de almacén: ${err?.message || 'Error del sistema'}`
       });
     } finally {
       setIsProcessing(false);
@@ -366,7 +381,7 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
       'SKU',
       'Producto',
       'Categoría',
-      'Cantidad Despachada',
+      'Cantidad de Salida',
       'Celdas de Extracción',
       'Destino / Cliente',
       'Medio de Entrega',
@@ -392,8 +407,8 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
 
     const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Salidas_Despachadas');
-    XLSX.writeFile(wb, `Salidas_WMS_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    XLSX.utils.book_append_sheet(wb, ws, 'Salidas_Directas');
+    XLSX.writeFile(wb, `Salidas_Almacen_WMS_${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
   // Filter legacy / pending orders
@@ -413,11 +428,11 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
               Outbound Express
             </span>
             <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
-              Módulo de Salidas y Despacho Rápido
+              Módulo de Salidas Directas de Almacén
             </h2>
           </div>
           <p className="text-xs sm:text-sm text-slate-500 max-w-2xl">
-            Despache mercancía de forma inmediata sin crear órdenes previas: seleccione o escanee el producto, indique el destino y el medio de entrega.
+            Registre salidas de mercancía de forma inmediata sin crear órdenes previas: seleccione o escanee el producto, indique el destino y el medio de entrega.
           </p>
         </div>
 
@@ -644,7 +659,7 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
                   <div className="bg-white p-4 rounded-2xl border border-amber-200/80 space-y-3">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-bold text-slate-700">
-                        Cantidad a Despachar:
+                        Cantidad para Salida:
                       </span>
                       <span className="text-[11px] font-mono font-semibold text-slate-500">
                         Quedarán: <strong className="text-slate-800 font-bold">{Math.max(0, availableStock - quantity)}</strong> uds
@@ -751,6 +766,7 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
                 <div className="relative">
                   <MapPin className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-400" />
                   <input
+                    id="direct-dispatch-destination-input"
                     type="text"
                     value={destination}
                     onChange={(e) => setDestination(e.target.value)}
@@ -762,14 +778,25 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
                 {/* Chips de Sugerencia Rápida */}
                 <div className="space-y-1.5">
                   <span className="text-[10px] font-mono uppercase font-bold text-slate-400 block">
-                    Destinos Frecuentes (Clic para rellenar):
+                    Destinos Frecuentes (Clic para rellenar o personalizar):
                   </span>
                   <div className="flex flex-wrap gap-1.5">
                     {destinationPresets.map(preset => (
                       <button
                         key={preset}
                         type="button"
-                        onClick={() => setDestination(preset)}
+                        onClick={() => {
+                          if (preset.includes('Otro')) {
+                            setDestination('');
+                            const input = document.getElementById('direct-dispatch-destination-input') as HTMLInputElement | null;
+                            if (input) {
+                              input.focus();
+                              input.placeholder = '✏️ Escriba aquí de qué se trata el destino personalizado...';
+                            }
+                          } else {
+                            setDestination(preset);
+                          }
+                        }}
                         className={`px-3 py-1.5 rounded-xl text-xs font-medium transition cursor-pointer border ${
                           destination === preset
                             ? 'bg-blue-50 text-blue-700 border-blue-300 font-bold'
@@ -841,6 +868,32 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
                 })}
               </div>
 
+              {/* Input interactivo si se selecciona 'Otro Medio de Entrega' */}
+              {deliveryMethod === '__OTHER__' && (
+                <div className="p-3 bg-indigo-50/90 border-2 border-indigo-300 rounded-2xl space-y-1.5 animate-fadeIn">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-mono font-black uppercase text-indigo-900 tracking-wider">
+                      ✏️ ¿De qué se trata el medio de entrega? (especifique):
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setDeliveryMethod('Reparto Local (Unidad Propia)')}
+                      className="text-[10px] text-slate-400 hover:text-slate-600 font-bold cursor-pointer"
+                    >
+                      ✕ Cancelar
+                    </button>
+                  </div>
+                  <input
+                    type="text"
+                    value={customDeliveryMethodText}
+                    onChange={(e) => setCustomDeliveryMethodText(e.target.value)}
+                    placeholder="Ej. Transporte de personal, Flete tercerizado, Taxi de carga..."
+                    className="w-full px-3.5 py-2 bg-white border border-indigo-300 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    required
+                  />
+                </div>
+              )}
+
               {/* Campos opcionales: Guía y Notas */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
                 <div>
@@ -874,7 +927,7 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
 
           </div>
 
-          {/* COLUMNA DERECHA: RESUMEN Y ACCIÓN DE DESPACHO INMEDIATO (4 de 12 columnas) */}
+          {/* COLUMNA DERECHA: RESUMEN Y ACCIÓN DE SALIDA DE ALMACÉN INMEDIATA (4 de 12 columnas) */}
           <div className="lg:col-span-4 space-y-6">
 
             <div className="bg-white p-5 sm:p-6 rounded-3xl border border-slate-200/90 shadow-xs space-y-5 sticky top-6">
@@ -894,7 +947,7 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
                 {/* Producto */}
                 <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-1">
                   <span className="text-[10px] font-mono uppercase font-bold text-slate-400 block">
-                    Producto a Despachar:
+                    Producto para Salida:
                   </span>
                   {selectedProduct ? (
                     <div>
@@ -994,7 +1047,7 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-150">
             <div>
               <h3 className="text-base font-black text-slate-900">
-                Historial de Salidas Directas Despachadas
+                Historial de Salidas Directas de Almacén
               </h3>
               <p className="text-xs text-slate-400">
                 Registro de todas las salidas y remisiones completadas de forma directa
@@ -1125,7 +1178,7 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
                 Pedidos Programados en Cola
               </h3>
               <p className="text-xs text-slate-400">
-                Órdenes externas pendientes de despachar ({pendingOrdersList.length} pedidos)
+                Órdenes pendientes de salida de almacén ({pendingOrdersList.length} pedidos)
               </p>
             </div>
 
@@ -1167,11 +1220,11 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
                     type="button"
                     onClick={async () => {
                       await onCompleteOrder(order.id);
-                      setFeedback({ type: 'ok', text: `Pedido ${order.id} despachado con éxito.` });
+                      setFeedback({ type: 'ok', text: `Salida del pedido ${order.id} registrada con éxito.` });
                     }}
                     className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition cursor-pointer shadow-xs"
                   >
-                    Despachar Pedido →
+                    Registrar Salida →
                   </button>
                 )}
               </div>
@@ -1336,7 +1389,7 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
                   Comprobante Oficial WMS
                 </span>
                 <h3 className="text-base font-black">
-                  Vale de Despacho y Salida
+                  Vale de Salida de Almacén
                 </h3>
               </div>
               <button
@@ -1357,7 +1410,7 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
 
               <div className="grid grid-cols-2 gap-3 p-3 bg-slate-50 rounded-2xl border border-slate-200">
                 <div>
-                  <span className="text-[10px] font-mono text-slate-400 block">Folio de Despacho:</span>
+                  <span className="text-[10px] font-mono text-slate-400 block">Folio de Salida:</span>
                   <strong className="text-sm font-mono font-black text-slate-900">{lastDispatchRecord.id}</strong>
                 </div>
                 <div>
@@ -1378,7 +1431,7 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
                   <span className="font-mono font-extrabold text-amber-800">{lastDispatchRecord.sku}</span>
                 </div>
                 <div className="flex justify-between items-baseline">
-                  <span className="text-slate-500 font-medium">Cantidad Despachada:</span>
+                  <span className="text-slate-500 font-medium">Cantidad de Salida:</span>
                   <span className="font-mono font-black text-base text-slate-900">{lastDispatchRecord.qty} unidades</span>
                 </div>
                 <div className="flex justify-between items-baseline">

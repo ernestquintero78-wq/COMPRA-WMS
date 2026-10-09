@@ -681,8 +681,8 @@ export default function App() {
     await syncAllToGoogleSheetNow(updatedBins, updatedInventory, updatedOrders);
     await appendActivityLog(
       activeOperator ? `${activeOperator.name} (${activeOperator.role})` : (user?.displayName || 'Logistics Admin'),
-      'Salida Directa Despachada',
-      `Despachadas ${dispatchData.qty} uds de ${item.name} (${dispatchData.sku}) hacia "${dispatchData.destination}" vía "${dispatchData.deliveryMethod}". Celdas afectadas: ${deductedBins.join(', ') || 'Inventario General'}`
+      'Salida Directa de Almacén',
+      `Salida de almacén de ${dispatchData.qty} uds de ${item.name} (${dispatchData.sku}) hacia "${dispatchData.destination}" vía "${dispatchData.deliveryMethod}". Celdas afectadas: ${deductedBins.join(', ') || 'Inventario General'}`
     );
 
     await loadWarehouseData();
@@ -1552,7 +1552,7 @@ export default function App() {
                         ) : (
                           <div className="p-3 bg-white border border-slate-200 rounded-xl space-y-2 shadow-2xs">
                             <span className="text-[10px] font-bold text-slate-700 block">
-                              ¿Desea despachar el pedido <code className="bg-slate-100 px-1 py-0.5 rounded font-mono">{alert.orderId}</code> inmediatamente?
+                              ¿Desea registrar la salida del pedido <code className="bg-slate-100 px-1 py-0.5 rounded font-mono">{alert.orderId}</code> inmediatamente?
                             </span>
                             <p className="text-[9px] text-slate-400 font-semibold leading-normal">
                               Esta acción cambiará el estado del pedido a "Completed" y deducirá los artículos del inventario de forma automática.
@@ -1563,12 +1563,12 @@ export default function App() {
                                   if (alert.orderId) {
                                     await handleCompleteOrder(alert.orderId);
                                     setResolvingAlertId(null);
-                                    setStatusMsg(`Pedido ${alert.orderId} despachado con éxito.`);
+                                    setStatusMsg(`Salida del pedido ${alert.orderId} registrada con éxito.`);
                                   }
                                 }}
                                 className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold font-mono shadow-sm transition-all"
                               >
-                                Sí, Despachar
+                                Sí, Confirmar Salida
                               </button>
                               <button
                                 onClick={() => setResolvingAlertId(null)}

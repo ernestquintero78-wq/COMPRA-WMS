@@ -300,6 +300,26 @@ export const InventoryManager: React.FC<InventoryProps> = ({
     }
   };
 
+  // States for 'Otro' custom selection across SKU creation
+  const [isCustomCategoryMode, setIsCustomCategoryMode] = useState<boolean>(false);
+  const [customCategoryDetails, setCustomCategoryDetails] = useState<string>('');
+
+  const [isCustomSuperMode, setIsCustomSuperMode] = useState<boolean>(false);
+  const [customSuperDetails, setCustomSuperDetails] = useState<string>('');
+
+  const [isCustomSubMode, setIsCustomSubMode] = useState<boolean>(false);
+  const [customSubDetails, setCustomSubDetails] = useState<string>('');
+
+  // States for 'Otro' custom selection across SKU editing
+  const [editIsCustomCategoryMode, setEditIsCustomCategoryMode] = useState<boolean>(false);
+  const [editCustomCategoryDetails, setEditCustomCategoryDetails] = useState<string>('');
+
+  const [editIsCustomSuperMode, setEditIsCustomSuperMode] = useState<boolean>(false);
+  const [editCustomSuperDetails, setEditCustomSuperDetails] = useState<string>('');
+
+  const [editIsCustomSubMode, setEditIsCustomSubMode] = useState<boolean>(false);
+  const [editCustomSubDetails, setEditCustomSubDetails] = useState<string>('');
+
   // Helpers to resolve Superalmacén and Subalmacén for any SKU
   const getSkuSuperWarehouse = (item: InventoryItem): WarehouseSection => {
     if (item.superWarehouseId) {
@@ -675,7 +695,7 @@ export const InventoryManager: React.FC<InventoryProps> = ({
       setIsSimulatingAbcOptimization(false);
       const categoryACount = abcAnalysis.filter(i => i.categoryLetter === 'A').length;
       setOptimizationSuccessMsg(
-        `Optimización de Ranuras (Slotting) finalizada con éxito. Se han diseñado asignaciones específicas para las bahías frontales del almacén. Los ${categoryACount} SKUs de tipo 'A' (Alta Rotación) han sido ubicados en estanterías bajas cerca del muelle de despacho para reducir la fatiga operativa y agilizar el picking en un 22%.`
+        `Optimización de Ranuras (Slotting) finalizada con éxito. Se han diseñado asignaciones específicas para las bahías frontales del almacén. Los ${categoryACount} SKUs de tipo 'A' (Alta Rotación) han sido ubicados en estanterías bajas cerca de la zona de salidas de almacén para reducir la fatiga operativa y agilizar el picking en un 22%.`
       );
     }, 1800);
   };
@@ -1101,8 +1121,15 @@ export const InventoryManager: React.FC<InventoryProps> = ({
                     <span>Superalmacén (Sección Principal) *</span>
                   </label>
                   <select
-                    value={selectedSuperWarehouseId}
-                    onChange={(e) => handleSuperWarehouseChange(e.target.value)}
+                    value={isCustomSuperMode ? '__OTHER__' : selectedSuperWarehouseId}
+                    onChange={(e) => {
+                      if (e.target.value === '__OTHER__') {
+                        setIsCustomSuperMode(true);
+                      } else {
+                        setIsCustomSuperMode(false);
+                        handleSuperWarehouseChange(e.target.value);
+                      }
+                    }}
                     className="w-full text-xs font-bold rounded-xl border border-indigo-200 bg-white p-2.5 text-slate-800 focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600 shadow-2xs transition"
                   >
                     {warehouseSections.map((wh) => (
@@ -1110,7 +1137,74 @@ export const InventoryManager: React.FC<InventoryProps> = ({
                         [{wh.code}] {wh.name}
                       </option>
                     ))}
+                    <option value="__OTHER__">➕ Otro Superalmacén (especificar de qué se trata...)</option>
                   </select>
+
+                  {isCustomSuperMode && (
+                    <div className="mt-2 p-2 bg-indigo-50 border border-indigo-300 rounded-xl space-y-1 animate-fadeIn">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-black uppercase text-indigo-900 tracking-wider font-mono">
+                          ✏️ ¿De qué se trata el nuevo Superalmacén?
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setIsCustomSuperMode(false)}
+                          className="text-[10px] text-slate-400 hover:text-slate-600 font-bold cursor-pointer"
+                        >
+                          ✕ Cancelar
+                        </button>
+                      </div>
+                      <div className="flex gap-1.5">
+                        <input
+                          type="text"
+                          value={customSuperDetails}
+                          onChange={(e) => setCustomSuperDetails(e.target.value)}
+                          placeholder="Escriba el nombre del nuevo Superalmacén..."
+                          className="grow text-xs font-bold p-1.5 bg-white border border-indigo-300 rounded-lg text-slate-800 focus:outline-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const name = customSuperDetails.trim();
+                            if (name) {
+                              const newWh: WarehouseSection = {
+                                id: `wh-${Date.now()}`,
+                                code: name.slice(0, 4).toUpperCase(),
+                                name: name,
+                                sectionType: 'General / Especializado',
+                                facilityLocation: 'Nave Central / Nueva Área',
+                                color: '#6366f1',
+                                status: 'Activo',
+                                createdAt: new Date().toISOString(),
+                                categories: [name, 'General'],
+                                subWarehouses: [{
+                                  id: `sub-${Date.now()}`,
+                                  warehouseId: `wh-${Date.now()}`,
+                                  code: `${name.slice(0, 3).toUpperCase()}-01`,
+                                  name: `Sección Principal ${name}`,
+                                  storageType: 'Racks Estándar',
+                                  status: 'Activo',
+                                  categories: [name],
+                                  createdAt: new Date().toISOString()
+                                }]
+                              };
+                              const updated = [...warehouseSections, newWh];
+                              setWarehouseSections(updated);
+                              localStorage.setItem('wms_warehouse_sections_v2', JSON.stringify(updated));
+                              window.dispatchEvent(new Event('wms_warehouses_updated'));
+                              setSelectedSuperWarehouseId(newWh.id);
+                              setSelectedSubWarehouseId(newWh.subWarehouses![0].id);
+                              setIsCustomSuperMode(false);
+                              setCustomSuperDetails('');
+                            }
+                          }}
+                          className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] rounded-lg shrink-0 cursor-pointer shadow-xs"
+                        >
+                          Guardar
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   <span className="text-[10px] text-slate-400 block mt-1 truncate">
                     📍 {currentSuperWarehouse?.facilityLocation}
                   </span>
@@ -1123,8 +1217,15 @@ export const InventoryManager: React.FC<InventoryProps> = ({
                     <span>Almacén / Subalmacén Específico *</span>
                   </label>
                   <select
-                    value={selectedSubWarehouseId}
-                    onChange={(e) => handleSubWarehouseChange(e.target.value)}
+                    value={isCustomSubMode ? '__OTHER__' : selectedSubWarehouseId}
+                    onChange={(e) => {
+                      if (e.target.value === '__OTHER__') {
+                        setIsCustomSubMode(true);
+                      } else {
+                        setIsCustomSubMode(false);
+                        handleSubWarehouseChange(e.target.value);
+                      }
+                    }}
                     className="w-full text-xs font-bold rounded-xl border border-indigo-200 bg-white p-2.5 text-slate-800 focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600 shadow-2xs transition"
                   >
                     {availableSubWarehouses.length === 0 ? (
@@ -1136,7 +1237,70 @@ export const InventoryManager: React.FC<InventoryProps> = ({
                         </option>
                       ))
                     )}
+                    <option value="__OTHER__">➕ Otro Almacén / Subalmacén (especificar de qué se trata...)</option>
                   </select>
+
+                  {isCustomSubMode && (
+                    <div className="mt-2 p-2 bg-indigo-50 border border-indigo-300 rounded-xl space-y-1 animate-fadeIn">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-black uppercase text-indigo-900 tracking-wider font-mono">
+                          ✏️ ¿De qué se trata el nuevo Almacén / Subalmacén?
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setIsCustomSubMode(false)}
+                          className="text-[10px] text-slate-400 hover:text-slate-600 font-bold cursor-pointer"
+                        >
+                          ✕ Cancelar
+                        </button>
+                      </div>
+                      <div className="flex gap-1.5">
+                        <input
+                          type="text"
+                          value={customSubDetails}
+                          onChange={(e) => setCustomSubDetails(e.target.value)}
+                          placeholder="Escriba el nombre del nuevo subalmacén..."
+                          className="grow text-xs font-bold p-1.5 bg-white border border-indigo-300 rounded-lg text-slate-800 focus:outline-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const name = customSubDetails.trim();
+                            if (name) {
+                              const newSub: SubWarehouse = {
+                                id: `sub-${Date.now()}`,
+                                warehouseId: selectedSuperWarehouseId,
+                                code: name.slice(0, 4).toUpperCase(),
+                                name: name,
+                                storageType: 'Racks Estándar',
+                                status: 'Activo',
+                                categories: [name],
+                                createdAt: new Date().toISOString()
+                              };
+                              const updated = warehouseSections.map(w => {
+                                if (w.id === selectedSuperWarehouseId) {
+                                  return {
+                                    ...w,
+                                    subWarehouses: [...(w.subWarehouses || []), newSub]
+                                  };
+                                }
+                                return w;
+                              });
+                              setWarehouseSections(updated);
+                              localStorage.setItem('wms_warehouse_sections_v2', JSON.stringify(updated));
+                              window.dispatchEvent(new Event('wms_warehouses_updated'));
+                              setSelectedSubWarehouseId(newSub.id);
+                              setIsCustomSubMode(false);
+                              setCustomSubDetails('');
+                            }
+                          }}
+                          className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] rounded-lg shrink-0 cursor-pointer shadow-xs"
+                        >
+                          Guardar
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   <span className="text-[10px] text-slate-400 block mt-1 truncate">
                     {availableSubWarehouses.find(s => s.id === selectedSubWarehouseId)?.locationArea || 'Área asignada al subalmacén'}
                   </span>
@@ -1212,8 +1376,15 @@ export const InventoryManager: React.FC<InventoryProps> = ({
                   )}
 
                   <select
-                    value={category}
-                    onChange={(e) => setCategory(e.target.value)}
+                    value={isCustomCategoryMode ? '__OTHER__' : category}
+                    onChange={(e) => {
+                      if (e.target.value === '__OTHER__') {
+                        setIsCustomCategoryMode(true);
+                      } else {
+                        setIsCustomCategoryMode(false);
+                        setCategory(e.target.value);
+                      }
+                    }}
                     className="w-full text-xs font-bold rounded-xl border border-indigo-200 bg-white p-2.5 text-slate-800 focus:border-indigo-600 focus:outline-none focus:ring-1 focus:ring-indigo-600 shadow-2xs transition"
                   >
                     <optgroup label={`Recomendadas para ${currentSuperWarehouse?.name || 'este almacén'}`}>
@@ -1221,12 +1392,82 @@ export const InventoryManager: React.FC<InventoryProps> = ({
                         <option key={`sug-${cat}`} value={cat}>{cat}</option>
                       ))}
                     </optgroup>
-                    <optgroup label="Otras Categorías del Sistema">
+                    <optgroup label="Todas las Categorías">
                       {securityCategories.filter(c => !suggestedCategories.includes(c)).map(cat => (
                         <option key={`oth-${cat}`} value={cat}>{cat}</option>
                       ))}
                     </optgroup>
+                    <optgroup label="Personalizado / No listado">
+                      <option value="__OTHER__">➕ Otro / Otra categoría (especificar de qué se trata...)</option>
+                    </optgroup>
                   </select>
+
+                  {/* Input interactivo cuando se selecciona 'Otro' en Categoría */}
+                  {isCustomCategoryMode && (
+                    <div className="mt-2 p-2.5 bg-indigo-50 border-2 border-indigo-400 rounded-xl space-y-1.5 animate-fadeIn shadow-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-black uppercase text-indigo-900 tracking-wider flex items-center gap-1 font-mono">
+                          <span>✏️ ¿De qué se trata esta nueva categoría?</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setIsCustomCategoryMode(false)}
+                          className="text-[10px] text-slate-400 hover:text-slate-600 cursor-pointer font-bold"
+                        >
+                          ✕ Cancelar
+                        </button>
+                      </div>
+                      <p className="text-[9.5px] text-slate-600">
+                        Escriba el nombre exacto de la categoría y presione Enter o Asignar:
+                      </p>
+                      <div className="flex gap-1.5">
+                        <input
+                          type="text"
+                          value={customCategoryDetails}
+                          onChange={(e) => {
+                            setCustomCategoryDetails(e.target.value);
+                            if (e.target.value.trim()) {
+                              setCategory(e.target.value.trim());
+                            }
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              const val = customCategoryDetails.trim();
+                              if (val) {
+                                if (!securityCategories.includes(val)) {
+                                  setSecurityCategories(prev => [...prev, val]);
+                                }
+                                setCategory(val);
+                                setIsCustomCategoryMode(false);
+                                setCustomCategoryDetails('');
+                              }
+                            }
+                          }}
+                          placeholder="Escriba aquí de qué se trata..."
+                          autoFocus
+                          className="grow text-xs font-bold p-2 bg-white border border-indigo-300 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const val = customCategoryDetails.trim();
+                            if (val) {
+                              if (!securityCategories.includes(val)) {
+                                setSecurityCategories(prev => [...prev, val]);
+                              }
+                              setCategory(val);
+                              setIsCustomCategoryMode(false);
+                              setCustomCategoryDetails('');
+                            }
+                          }}
+                          className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs rounded-lg shrink-0 cursor-pointer shadow-xs transition"
+                        >
+                          Asignar
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
                   <div className="mt-1.5 flex items-center gap-1.5">
                     <input
@@ -2988,7 +3229,7 @@ export const InventoryManager: React.FC<InventoryProps> = ({
                     <span className="text-slate-400 font-bold block uppercase tracking-wider text-[9px] font-mono">Estrategia de Ubicación</span>
                     <p className="text-indigo-950 font-extrabold">Nivel Inferior (Bahías 1-3) - Acceso Inmediato</p>
                     <p className="text-slate-500 leading-relaxed">
-                      Colocar al nivel del suelo y cerca de las puertas de despacho para reducir la fatiga en el picking diario.
+                      Colocar al nivel del suelo y cerca de las puertas de salidas de almacén para reducir la fatiga en el picking diario.
                     </p>
                   </div>
                 </div>
@@ -3279,7 +3520,7 @@ export const InventoryManager: React.FC<InventoryProps> = ({
 
                       <div className="space-y-1">
                         <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">Indicador de Rotación</span>
-                        <p className="font-extrabold text-slate-800">{item.totalConsumed} unidades despachadas</p>
+                        <p className="font-extrabold text-slate-800">{item.totalConsumed} unidades en salidas de almacén</p>
                         <p className="text-slate-500 text-[10px]">Tasa de salida promedio: {item.dailyRate.toFixed(2)} unidades/día</p>
                       </div>
                     </div>
@@ -4719,8 +4960,15 @@ export const InventoryManager: React.FC<InventoryProps> = ({
                         Superalmacén *
                       </label>
                       <select
-                        value={editSuperWarehouseId}
-                        onChange={(e) => handleEditSuperWarehouseChange(e.target.value)}
+                        value={editIsCustomSuperMode ? '__OTHER__' : editSuperWarehouseId}
+                        onChange={(e) => {
+                          if (e.target.value === '__OTHER__') {
+                            setEditIsCustomSuperMode(true);
+                          } else {
+                            setEditIsCustomSuperMode(false);
+                            handleEditSuperWarehouseChange(e.target.value);
+                          }
+                        }}
                         className="w-full text-xs font-bold rounded-xl border border-indigo-200 bg-white p-2.5 text-slate-800 focus:border-indigo-600 focus:outline-none"
                       >
                         {warehouseSections.map((wh) => (
@@ -4728,7 +4976,65 @@ export const InventoryManager: React.FC<InventoryProps> = ({
                             [{wh.code}] {wh.name}
                           </option>
                         ))}
+                        <option value="__OTHER__">➕ Otro Superalmacén (especificar de qué se trata...)</option>
                       </select>
+
+                      {editIsCustomSuperMode && (
+                        <div className="mt-2 p-2 bg-indigo-50 border border-indigo-300 rounded-xl space-y-1 animate-fadeIn">
+                          <span className="text-[10px] font-black uppercase text-indigo-900 tracking-wider font-mono block">
+                            ✏️ ¿De qué se trata el nuevo Superalmacén?
+                          </span>
+                          <div className="flex gap-1.5">
+                            <input
+                              type="text"
+                              value={editCustomSuperDetails}
+                              onChange={(e) => setEditCustomSuperDetails(e.target.value)}
+                              placeholder="Escriba el nombre del nuevo Superalmacén..."
+                              className="grow text-xs font-bold p-1.5 bg-white border border-indigo-300 rounded-lg text-slate-800 focus:outline-none"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const name = editCustomSuperDetails.trim();
+                                if (name) {
+                                  const newWh: WarehouseSection = {
+                                    id: `wh-${Date.now()}`,
+                                    code: name.slice(0, 4).toUpperCase(),
+                                    name: name,
+                                    sectionType: 'General / Especializado',
+                                    facilityLocation: 'Nave Central / Nueva Área',
+                                    color: '#6366f1',
+                                    status: 'Activo',
+                                    createdAt: new Date().toISOString(),
+                                    categories: [name, 'General'],
+                                    subWarehouses: [{
+                                      id: `sub-${Date.now()}`,
+                                      warehouseId: `wh-${Date.now()}`,
+                                      code: `${name.slice(0, 3).toUpperCase()}-01`,
+                                      name: `Sección Principal ${name}`,
+                                      storageType: 'Racks Estándar',
+                                      status: 'Activo',
+                                      categories: [name],
+                                      createdAt: new Date().toISOString()
+                                    }]
+                                  };
+                                  const updated = [...warehouseSections, newWh];
+                                  setWarehouseSections(updated);
+                                  localStorage.setItem('wms_warehouse_sections_v2', JSON.stringify(updated));
+                                  window.dispatchEvent(new Event('wms_warehouses_updated'));
+                                  setEditSuperWarehouseId(newWh.id);
+                                  setEditSubWarehouseId(newWh.subWarehouses![0].id);
+                                  setEditIsCustomSuperMode(false);
+                                  setEditCustomSuperDetails('');
+                                }
+                              }}
+                              className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] rounded-lg shrink-0 cursor-pointer shadow-xs"
+                            >
+                              Guardar
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     {/* Almacén / Subalmacén */}
@@ -4737,8 +5043,15 @@ export const InventoryManager: React.FC<InventoryProps> = ({
                         Almacén / Subalmacén *
                       </label>
                       <select
-                        value={editSubWarehouseId}
-                        onChange={(e) => handleEditSubWarehouseChange(e.target.value)}
+                        value={editIsCustomSubMode ? '__OTHER__' : editSubWarehouseId}
+                        onChange={(e) => {
+                          if (e.target.value === '__OTHER__') {
+                            setEditIsCustomSubMode(true);
+                          } else {
+                            setEditIsCustomSubMode(false);
+                            handleEditSubWarehouseChange(e.target.value);
+                          }
+                        }}
                         className="w-full text-xs font-bold rounded-xl border border-indigo-200 bg-white p-2.5 text-slate-800 focus:border-indigo-600 focus:outline-none"
                       >
                         {availableEditSubWarehouses.length === 0 ? (
@@ -4750,7 +5063,61 @@ export const InventoryManager: React.FC<InventoryProps> = ({
                             </option>
                           ))
                         )}
+                        <option value="__OTHER__">➕ Otro Almacén / Subalmacén (especificar de qué se trata...)</option>
                       </select>
+
+                      {editIsCustomSubMode && (
+                        <div className="mt-2 p-2 bg-indigo-50 border border-indigo-300 rounded-xl space-y-1 animate-fadeIn">
+                          <span className="text-[10px] font-black uppercase text-indigo-900 tracking-wider font-mono block">
+                            ✏️ ¿De qué se trata el nuevo Almacén / Subalmacén?
+                          </span>
+                          <div className="flex gap-1.5">
+                            <input
+                              type="text"
+                              value={editCustomSubDetails}
+                              onChange={(e) => setEditCustomSubDetails(e.target.value)}
+                              placeholder="Escriba el nombre del nuevo subalmacén..."
+                              className="grow text-xs font-bold p-1.5 bg-white border border-indigo-300 rounded-lg text-slate-800 focus:outline-none"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const name = editCustomSubDetails.trim();
+                                if (name) {
+                                  const newSub: SubWarehouse = {
+                                    id: `sub-${Date.now()}`,
+                                    warehouseId: editSuperWarehouseId,
+                                    code: name.slice(0, 4).toUpperCase(),
+                                    name: name,
+                                    storageType: 'Racks Estándar',
+                                    status: 'Activo',
+                                    categories: [name],
+                                    createdAt: new Date().toISOString()
+                                  };
+                                  const updated = warehouseSections.map(w => {
+                                    if (w.id === editSuperWarehouseId) {
+                                      return {
+                                        ...w,
+                                        subWarehouses: [...(w.subWarehouses || []), newSub]
+                                      };
+                                    }
+                                    return w;
+                                  });
+                                  setWarehouseSections(updated);
+                                  localStorage.setItem('wms_warehouse_sections_v2', JSON.stringify(updated));
+                                  window.dispatchEvent(new Event('wms_warehouses_updated'));
+                                  setEditSubWarehouseId(newSub.id);
+                                  setEditIsCustomSubMode(false);
+                                  setEditCustomSubDetails('');
+                                }
+                              }}
+                              className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] rounded-lg shrink-0 cursor-pointer shadow-xs"
+                            >
+                              Guardar
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     {/* Categoría */}
@@ -4759,8 +5126,15 @@ export const InventoryManager: React.FC<InventoryProps> = ({
                         Categoría donde Debe Ir *
                       </label>
                       <select
-                        value={editFormFields.category || ''}
-                        onChange={(e) => setEditFormFields(prev => ({ ...prev, category: e.target.value }))}
+                        value={editIsCustomCategoryMode ? '__OTHER__' : (editFormFields.category || '')}
+                        onChange={(e) => {
+                          if (e.target.value === '__OTHER__') {
+                            setEditIsCustomCategoryMode(true);
+                          } else {
+                            setEditIsCustomCategoryMode(false);
+                            setEditFormFields(prev => ({ ...prev, category: e.target.value }));
+                          }
+                        }}
                         className="w-full text-xs font-bold rounded-xl border border-indigo-200 bg-white p-2.5 text-slate-800 focus:border-indigo-600 focus:outline-none"
                       >
                         <optgroup label={`Recomendadas para ${currentEditSuperWarehouse?.name || 'este almacén'}`}>
@@ -4773,7 +5147,77 @@ export const InventoryManager: React.FC<InventoryProps> = ({
                             <option key={`edit-oth-${cat}`} value={cat}>{cat}</option>
                           ))}
                         </optgroup>
+                        <optgroup label="Personalizado / No listado">
+                          <option value="__OTHER__">➕ Otro / Otra categoría (especificar de qué se trata...)</option>
+                        </optgroup>
                       </select>
+
+                      {/* Input interactivo cuando se selecciona 'Otro' en Categoría dentro de Edit SKU */}
+                      {editIsCustomCategoryMode && (
+                        <div className="mt-2 p-2.5 bg-indigo-50 border-2 border-indigo-400 rounded-xl space-y-1.5 animate-fadeIn shadow-xs">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-black uppercase text-indigo-900 tracking-wider flex items-center gap-1 font-mono">
+                              <span>✏️ ¿De qué se trata esta nueva categoría?</span>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setEditIsCustomCategoryMode(false)}
+                              className="text-[10px] text-slate-400 hover:text-slate-600 cursor-pointer font-bold"
+                            >
+                              ✕ Cancelar
+                            </button>
+                          </div>
+                          <p className="text-[9.5px] text-slate-600">
+                            Escriba el nombre exacto de la categoría y presione Asignar:
+                          </p>
+                          <div className="flex gap-1.5">
+                            <input
+                              type="text"
+                              value={editCustomCategoryDetails}
+                              onChange={(e) => {
+                                setEditCustomCategoryDetails(e.target.value);
+                                if (e.target.value.trim()) {
+                                  setEditFormFields(prev => ({ ...prev, category: e.target.value.trim() }));
+                                }
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  const val = editCustomCategoryDetails.trim();
+                                  if (val) {
+                                    if (!securityCategories.includes(val)) {
+                                      setSecurityCategories(prev => [...prev, val]);
+                                    }
+                                    setEditFormFields(prev => ({ ...prev, category: val }));
+                                    setEditIsCustomCategoryMode(false);
+                                    setEditCustomCategoryDetails('');
+                                  }
+                                }
+                              }}
+                              placeholder="Escriba aquí de qué se trata..."
+                              autoFocus
+                              className="grow text-xs font-bold p-2 bg-white border border-indigo-300 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const val = editCustomCategoryDetails.trim();
+                                if (val) {
+                                  if (!securityCategories.includes(val)) {
+                                    setSecurityCategories(prev => [...prev, val]);
+                                  }
+                                  setEditFormFields(prev => ({ ...prev, category: val }));
+                                  setEditIsCustomCategoryMode(false);
+                                  setEditCustomCategoryDetails('');
+                                }
+                              }}
+                              className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs rounded-lg shrink-0 cursor-pointer shadow-xs transition"
+                            >
+                              Asignar
+                            </button>
+                          </div>
+                        </div>
+                      )}
 
                       <div className="mt-1 flex gap-1">
                         <input

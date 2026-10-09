@@ -36,7 +36,7 @@ interface PresetSize {
 
 const PRESET_SIZES: PresetSize[] = [
   { id: '10x7.5', name: '10 × 7.5 cm', desc: '4" × 3" Estándar de Almacén WMS', base: 10.0, alto: 7.5 },
-  { id: '10x15', name: '10 × 15 cm', desc: '4" × 6" Formato Grande / Despacho', base: 10.0, alto: 15.0 },
+  { id: '10x15', name: '10 × 15 cm', desc: '4" × 6" Formato Grande / Salidas de Almacén', base: 10.0, alto: 15.0 },
   { id: '10x5', name: '10 × 5 cm', desc: '4" × 2" Cajas y Pasillos', base: 10.0, alto: 5.0 },
   { id: '7.5x5', name: '7.5 × 5 cm', desc: '3" × 2" Mediana para Cajas', base: 7.5, alto: 5.0 },
   { id: '5x3', name: '5 × 3 cm', desc: '2" × 1.2" Miniatura de Piezas', base: 5.0, alto: 3.0 },
