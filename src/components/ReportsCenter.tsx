@@ -28,11 +28,17 @@ import {
   ShieldCheck,
   Building2,
   Truck,
-  Sparkles
+  Sparkles,
+  Search,
+  X,
+  Filter,
+  Check,
+  Boxes
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import { Bin, InventoryItem, Order, ActivityLog, CycleCountSession, WarehouseSection } from '../types';
+import { Bin, InventoryItem, Order, ActivityLog, CycleCountSession, WarehouseSection, ExternalWarehouse, ExternalTransaction, ExternalInventoryItem } from '../types';
 import { getStoredWarehouseSections } from './WarehouseSectionManager';
+import { getStoredExternalWarehouses, getStoredExternalTransactions, getStoredExternalInventory } from './ExternalWarehouseManager';
 
 interface ReportsCenterProps {
   inventory: InventoryItem[];
@@ -42,7 +48,7 @@ interface ReportsCenterProps {
   countedSessions?: CycleCountSession[];
 }
 
-type ActiveReportType = 'performance' | 'inventory' | 'warehouse_sections' | 'direct_dispatches' | 'audit_logs' | 'orders_flow' | 'full_backup';
+type ActiveReportType = 'performance' | 'inventory' | 'warehouse_sections' | 'direct_dispatches' | 'external_movements' | 'audit_logs' | 'orders_flow' | 'full_backup';
 
 function oklchToRgbOrHsl(oklchStr: string): string {
   const match = oklchStr.match(/oklch\(\s*([0-9.]+%?)\s+([0-9.]+)\s+([0-9.]+)(?:\s*\/\s*([0-9.]+%?))?\s*\)/i);
@@ -135,6 +141,50 @@ export default function ReportsCenter({
     window.addEventListener('wms_direct_dispatches_updated', handleDispatchesUpdate);
     return () => window.removeEventListener('wms_direct_dispatches_updated', handleDispatchesUpdate);
   }, []);
+
+  // Almacenes Externos, Inventario y Transacciones / Movimientos
+  const [extWarehouses, setExtWarehouses] = useState<ExternalWarehouse[]>(() => getStoredExternalWarehouses());
+  const [extTransactions, setExtTransactions] = useState<ExternalTransaction[]>(() => getStoredExternalTransactions());
+  const [extInventory, setExtInventory] = useState<ExternalInventoryItem[]>(() => getStoredExternalInventory());
+
+  // Sub-vista activa para Almacén Externo: 'inventory' (Inventario) o 'movements' (Bitácora de Movimientos)
+  const [extReportSubView, setExtReportSubView] = useState<'inventory' | 'movements'>('inventory');
+
+  useEffect(() => {
+    const handleTxUpdate = () => {
+      setExtTransactions(getStoredExternalTransactions());
+    };
+    const handleWhUpdate = () => {
+      setExtWarehouses(getStoredExternalWarehouses());
+    };
+    const handleInvUpdate = () => {
+      setExtInventory(getStoredExternalInventory());
+    };
+    window.addEventListener('wms_external_transactions_updated', handleTxUpdate);
+    window.addEventListener('wms_external_warehouses_updated', handleWhUpdate);
+    window.addEventListener('wms_external_inventory_updated', handleInvUpdate);
+    const handleStorage = () => {
+      setExtTransactions(getStoredExternalTransactions());
+      setExtWarehouses(getStoredExternalWarehouses());
+      setExtInventory(getStoredExternalInventory());
+    };
+    window.addEventListener('storage', handleStorage);
+    return () => {
+      window.removeEventListener('wms_external_transactions_updated', handleTxUpdate);
+      window.removeEventListener('wms_external_warehouses_updated', handleWhUpdate);
+      window.removeEventListener('wms_external_inventory_updated', handleInvUpdate);
+      window.removeEventListener('storage', handleStorage);
+    };
+  }, []);
+
+  // Filtros para el reporte de Almacén Externo
+  const [extWhFilter, setExtWhFilter] = useState<string>('all');
+  const [extTypeFilter, setExtTypeFilter] = useState<'all' | 'Entrada' | 'Salida'>('all');
+  const [extCategoryFilter, setExtCategoryFilter] = useState<string>('all');
+  const [extSearchTerm, setExtSearchTerm] = useState<string>('');
+
+  // Modal de impresión oficial
+  const [isPrintModalOpen, setIsPrintModalOpen] = useState<boolean>(false);
 
   // Helper to check if a warehouse section matches the current filter
   const isWarehouseMatch = (wh: WarehouseSection): boolean => {
@@ -229,6 +279,48 @@ export default function ReportsCenter({
       return hasSku;
     });
   }, [logs, filteredInventoryByLine, selectedWarehouseFilter, customWarehouseFilterText]);
+
+  // Transacciones de Almacén Externo filtradas
+  const filteredExtTransactions = React.useMemo(() => {
+    return extTransactions.filter(tx => {
+      if (extWhFilter !== 'all' && tx.warehouseId !== extWhFilter) return false;
+      if (extTypeFilter !== 'all' && tx.type !== extTypeFilter) return false;
+      if (extSearchTerm.trim()) {
+        const q = extSearchTerm.toLowerCase();
+        const matchSku = (tx.sku || '').toLowerCase().includes(q);
+        const matchProd = (tx.productName || '').toLowerCase().includes(q);
+        const matchId = (tx.id || '').toLowerCase().includes(q);
+        const matchDest = (tx.sourceOrDestination || '').toLowerCase().includes(q);
+        const matchRef = (tx.referenceDoc || '').toLowerCase().includes(q);
+        const matchCarrier = (tx.carrierOrDelivery || '').toLowerCase().includes(q);
+        const matchOp = (tx.operator || '').toLowerCase().includes(q);
+        if (!matchSku && !matchProd && !matchId && !matchDest && !matchRef && !matchCarrier && !matchOp) return false;
+      }
+      return true;
+    });
+  }, [extTransactions, extWhFilter, extTypeFilter, extSearchTerm]);
+
+  // Inventario de Almacenes Externos filtrado
+  const filteredExtInventory = React.useMemo(() => {
+    return extInventory.filter(item => {
+      if (extWhFilter !== 'all' && item.warehouseId !== extWhFilter) return false;
+      if (extCategoryFilter !== 'all' && item.category !== extCategoryFilter) return false;
+      if (extSearchTerm.trim()) {
+        const q = extSearchTerm.toLowerCase();
+        const matchSku = (item.sku || '').toLowerCase().includes(q);
+        const matchName = (item.name || '').toLowerCase().includes(q);
+        const matchDesc = (item.description || '').toLowerCase().includes(q);
+        const matchCat = (item.category || '').toLowerCase().includes(q);
+        const matchLoc = (item.locationInWarehouse || '').toLowerCase().includes(q);
+        if (!matchSku && !matchName && !matchDesc && !matchCat && !matchLoc) return false;
+      }
+      return true;
+    });
+  }, [extInventory, extWhFilter, extCategoryFilter, extSearchTerm]);
+
+  const extCategoriesList = React.useMemo(() => {
+    return Array.from(new Set(extInventory.map(i => i.category || 'General')));
+  }, [extInventory]);
 
   useEffect(() => {
     const fetchRate = async () => {
@@ -421,6 +513,66 @@ export default function ReportsCenter({
     XLSX.writeFile(wb, `Reporte_Salidas_Directas_WMS_${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
+  // Export Movimientos de Almacén Externo en Excel
+  const handleExportExternalMovements = () => {
+    const data = filteredExtTransactions.map(tx => {
+      const wh = extWarehouses.find(w => w.id === tx.warehouseId);
+      return {
+        'Folio Movimiento': tx.id,
+        'Fecha y Hora': new Date(tx.timestamp).toLocaleString('es-ES'),
+        'Almacén Externo': wh ? `[${wh.code}] ${wh.name}` : tx.warehouseId,
+        'Ciudad / Ubicación': wh ? wh.city : 'N/A',
+        'Tipo de Movimiento': tx.type,
+        'Código SKU': tx.sku,
+        'Descripción del Producto': tx.productName,
+        'Cantidad (Uds)': tx.qty,
+        'Origen / Destino': tx.sourceOrDestination,
+        'Transportista / Chofer': tx.carrierOrDelivery || 'No asignado',
+        'Documento Referencia': tx.referenceDoc || 'Sin referencia',
+        'Operador Responsable': tx.operator,
+        'Observaciones': tx.notes || ''
+      };
+    });
+    const ws = XLSX.utils.json_to_sheet(data.length > 0 ? data : [{ 'Aviso': 'No hay movimientos registrados que coincidan con los filtros seleccionados' }]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Movimientos_Almacen_Ext');
+    XLSX.writeFile(wb, `Bitacora_Movimientos_Almacen_Externo_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    setBackupSuccessMsg(`Reporte exportado exitosamente: "Bitacora_Movimientos_Almacen_Externo_${new Date().toISOString().slice(0, 10)}.xlsx"`);
+    setTimeout(() => setBackupSuccessMsg(''), 5000);
+  };
+
+  // Export Inventario de Almacén Externo en Excel
+  const handleExportExternalInventory = () => {
+    const data = filteredExtInventory.map(item => {
+      const wh = extWarehouses.find(w => w.id === item.warehouseId);
+      const isLow = item.qty <= (item.minQty || 5);
+      const itemCost = convertItemCost(item.cost || 0);
+      const itemValuation = (item.qty || 0) * itemCost;
+      return {
+        'Código SKU': item.sku,
+        'Nombre del Producto': item.name,
+        'Descripción': item.description,
+        'Almacén Externo': wh ? `[${wh.code}] ${wh.name}` : item.warehouseId,
+        'Sede / Ciudad': wh ? wh.city : 'N/A',
+        'Categoría': item.category,
+        'Ubicación en Bodega': item.locationInWarehouse || 'General',
+        'Stock Actual (Uds)': item.qty,
+        'Stock Mínimo': item.minQty,
+        'Estado': isLow ? 'BAJO (ALERTA)' : 'ÓPTIMO',
+        [`Costo Unitario (${getCurrencySymbol()})`]: Number(itemCost.toFixed(2)),
+        [`Valuación Total (${getCurrencySymbol()})`]: Number(itemValuation.toFixed(2)),
+        'Código de Barras': item.barcode || 'N/A',
+        'Última Modificación': item.updatedAt
+      };
+    });
+    const ws = XLSX.utils.json_to_sheet(data.length > 0 ? data : [{ 'Aviso': 'No hay artículos en inventario con los filtros seleccionados' }]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Inventario_Almacen_Ext');
+    XLSX.writeFile(wb, `Inventario_Almacen_Externo_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    setBackupSuccessMsg(`Inventario externo descargado exitosamente: "Inventario_Almacen_Externo_${new Date().toISOString().slice(0, 10)}.xlsx"`);
+    setTimeout(() => setBackupSuccessMsg(''), 5000);
+  };
+
   // Full Database Backup Export function (Multi-Sheet Excel)
   const handleExportFullBackup = () => {
     const wb = XLSX.utils.book_new();
@@ -580,9 +732,30 @@ export default function ReportsCenter({
     const wsDirectDisp = XLSX.utils.json_to_sheet(directDispData.length > 0 ? directDispData : [{ 'Aviso': 'Sin salidas directas registradas' }]);
     XLSX.utils.book_append_sheet(wb, wsDirectDisp, 'Salidas_Directas_Almacen');
 
+    // 9. Sheet: Movimientos en Almacenes Externos
+    const extMovementsData = extTransactions.map(tx => {
+      const wh = extWarehouses.find(w => w.id === tx.warehouseId);
+      return {
+        'Folio': tx.id,
+        'Fecha y Hora': tx.timestamp,
+        'Almacén Externo': wh ? `[${wh.code}] ${wh.name}` : tx.warehouseId,
+        'Tipo': tx.type,
+        'SKU': tx.sku,
+        'Producto': tx.productName,
+        'Cantidad': tx.qty,
+        'Origen / Destino': tx.sourceOrDestination,
+        'Transporte / Chofer': tx.carrierOrDelivery || 'N/A',
+        'Doc. Referencia': tx.referenceDoc || 'N/A',
+        'Operador': tx.operator,
+        'Notas': tx.notes || ''
+      };
+    });
+    const wsExtMov = XLSX.utils.json_to_sheet(extMovementsData.length > 0 ? extMovementsData : [{ 'Aviso': 'Sin movimientos de almacén externo registrados' }]);
+    XLSX.utils.book_append_sheet(wb, wsExtMov, 'Movimientos_Almacen_Ext');
+
     const fileName = `Respaldo_Completo_WMS_${currentDate}.xlsx`;
     XLSX.writeFile(wb, fileName);
-    setBackupSuccessMsg(`Respaldo descargado exitosamente: "${fileName}" con 8 hojas operativas completas del WMS.`);
+    setBackupSuccessMsg(`Respaldo descargado exitosamente: "${fileName}" con 9 hojas operativas completas del WMS.`);
     setTimeout(() => setBackupSuccessMsg(''), 6000);
   };
 
@@ -898,7 +1071,32 @@ export default function ReportsCenter({
                 </div>
               </button>
 
-              {/* Report 7: Full System Backup (Multi-Sheet Excel) */}
+              {/* Report 7: External Warehouse: Inventory & Movements */}
+              <button
+                onClick={() => setSelectedReport('external_movements')}
+                className={`w-full text-left p-4 rounded-xl border transition-all flex items-start gap-3.5 ${
+                  selectedReport === 'external_movements' 
+                    ? 'bg-teal-50/70 border-teal-300 ring-2 ring-teal-500/20' 
+                    : 'border-slate-150 hover:bg-teal-50/30 hover:border-teal-250'
+                }`}
+              >
+                <div className={`p-2 rounded-lg shrink-0 ${selectedReport === 'external_movements' ? 'bg-teal-600 text-white' : 'bg-teal-100 text-teal-700'}`}>
+                  <Building2 className="h-5 w-5" />
+                </div>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-slate-900 text-xs block">7. Almacén Externo (Inventario y Movimientos)</span>
+                    <span className="text-[9px] font-mono font-bold bg-teal-100 text-teal-800 px-1.5 py-0.2 rounded uppercase">
+                      Inventario & Bitácora
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-slate-500 leading-relaxed font-medium">
+                    Catálogo de existencias físicas, valuación, stock crítico y bitácora transaccional en sedes remotas (3PL, satélites, obras). Reportes oficiales imprimibles con firmas.
+                  </p>
+                </div>
+              </button>
+
+              {/* Report 8: Full System Backup (Multi-Sheet Excel) */}
               <button
                 onClick={() => setSelectedReport('full_backup')}
                 className={`w-full text-left p-4 rounded-xl border transition-all flex items-start gap-3.5 ${
@@ -912,13 +1110,13 @@ export default function ReportsCenter({
                 </div>
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
-                    <span className="font-bold text-slate-900 text-xs block">7. Respaldo Completo del Sistema</span>
+                    <span className="font-bold text-slate-900 text-xs block">8. Respaldo Completo del Sistema</span>
                     <span className="text-[9px] font-mono font-bold bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded uppercase">
-                      8 Hojas
+                      9 Hojas
                     </span>
                   </div>
                   <p className="text-[10px] text-slate-500 leading-relaxed font-medium">
-                    Copia de seguridad integral en Excel (.xlsx) con 8 pestañas: resumen, inventario, celdas, pedidos, auditoría, conteos, superalmacenes y salidas directas.
+                    Copia de seguridad integral en Excel (.xlsx) con 9 pestañas: resumen, inventario, celdas, pedidos, auditoría, conteos, superalmacenes, salidas directas y almacenes externos.
                   </p>
                 </div>
               </button>
@@ -1113,6 +1311,180 @@ export default function ReportsCenter({
                 </div>
               )}
 
+              {selectedReport === 'external_movements' && (
+                <div className="space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 bg-teal-100 text-teal-800 rounded-lg">
+                        <ArrowLeftRight className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-extrabold text-slate-800">Bitácora de Movimientos de Almacén Externo</h4>
+                        <span className="text-[10px] font-mono text-teal-700 font-bold">Entradas, Salidas y Traslados en Sedes Satélites / 3PL</span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setIsPrintModalOpen(true)}
+                      className="px-3.5 py-1.5 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-3xs shrink-0"
+                    >
+                      <Printer className="h-4 w-4" />
+                      <span>Imprimir Reporte Oficial</span>
+                    </button>
+                  </div>
+
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    Historial cronológico auditable de entradas y salidas registradas en almacenes satélites, centros 3PL y depósitos de obra. Permite imprimir reportes oficiales con membrete y firmas de responsabilidad legal.
+                  </p>
+
+                  {/* Filters Bar inside preview */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 p-3 bg-teal-50/60 border border-teal-200/90 rounded-2xl">
+                    <div>
+                      <label className="text-[9px] font-mono font-bold text-teal-900 block uppercase mb-1">Almacén Externo:</label>
+                      <select
+                        value={extWhFilter}
+                        onChange={(e) => setExtWhFilter(e.target.value)}
+                        className="w-full px-2.5 py-1.5 bg-white border border-teal-300 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-teal-500 cursor-pointer shadow-3xs"
+                      >
+                        <option value="all">📦 Todos los Almacenes ({extWarehouses.length})</option>
+                        {extWarehouses.map(wh => (
+                          <option key={wh.id} value={wh.id}>[{wh.code}] {wh.name}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-[9px] font-mono font-bold text-teal-900 block uppercase mb-1">Tipo de Movimiento:</label>
+                      <select
+                        value={extTypeFilter}
+                        onChange={(e) => setExtTypeFilter(e.target.value as any)}
+                        className="w-full px-2.5 py-1.5 bg-white border border-teal-300 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-teal-500 cursor-pointer shadow-3xs"
+                      >
+                        <option value="all">🔄 Todas las Operaciones</option>
+                        <option value="Entrada">📥 Solo Entradas (Inbound)</option>
+                        <option value="Salida">📤 Solo Salidas (Outbound)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-[9px] font-mono font-bold text-teal-900 block uppercase mb-1">Búsqueda rápida:</label>
+                      <div className="relative">
+                        <input
+                          type="text"
+                          value={extSearchTerm}
+                          onChange={(e) => setExtSearchTerm(e.target.value)}
+                          placeholder="SKU, producto, folio, chofer..."
+                          className="w-full pl-7 pr-2.5 py-1.5 bg-white border border-teal-300 rounded-xl text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-teal-500 shadow-3xs"
+                        />
+                        <Search className="h-3.5 w-3.5 text-slate-400 absolute left-2 top-2" />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* KPIs */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                    <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-center">
+                      <span className="text-[8px] font-mono font-bold text-slate-400 block uppercase">Movimientos</span>
+                      <span className="text-base font-black font-mono text-slate-900 mt-0.5 block">{filteredExtTransactions.length}</span>
+                    </div>
+                    <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-center">
+                      <span className="text-[8px] font-mono font-bold text-emerald-700 block uppercase">Entradas</span>
+                      <span className="text-base font-black font-mono text-emerald-800 mt-0.5 block">
+                        {filteredExtTransactions.filter(t => t.type === 'Entrada').length} ({filteredExtTransactions.filter(t => t.type === 'Entrada').reduce((s, t) => s + t.qty, 0)} uds)
+                      </span>
+                    </div>
+                    <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-center">
+                      <span className="text-[8px] font-mono font-bold text-rose-700 block uppercase">Salidas</span>
+                      <span className="text-base font-black font-mono text-rose-800 mt-0.5 block">
+                        {filteredExtTransactions.filter(t => t.type === 'Salida').length} ({filteredExtTransactions.filter(t => t.type === 'Salida').reduce((s, t) => s + t.qty, 0)} uds)
+                      </span>
+                    </div>
+                    <div className="p-3 bg-teal-50 border border-teal-200 rounded-xl text-center">
+                      <span className="text-[8px] font-mono font-bold text-teal-700 block uppercase">Unidades Totales</span>
+                      <span className="text-base font-black font-mono text-teal-900 mt-0.5 block">
+                        {filteredExtTransactions.reduce((s, t) => s + t.qty, 0).toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Interactive Table */}
+                  <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-3xs">
+                    <div className="max-h-64 overflow-y-auto">
+                      <table className="w-full text-left border-collapse text-[10px]">
+                        <thead className="bg-slate-100/90 sticky top-0 font-mono text-[9px] uppercase font-bold text-slate-600 shadow-3xs">
+                          <tr>
+                            <th className="py-2 px-3 border-b border-slate-200">Folio / Fecha</th>
+                            <th className="py-2 px-3 border-b border-slate-200">Almacén</th>
+                            <th className="py-2 px-3 border-b border-slate-200">Tipo</th>
+                            <th className="py-2 px-3 border-b border-slate-200">SKU / Producto</th>
+                            <th className="py-2 px-3 border-b border-slate-200 text-right">Cant.</th>
+                            <th className="py-2 px-3 border-b border-slate-200">Origen / Destino</th>
+                            <th className="py-2 px-3 border-b border-slate-200">Transporte</th>
+                            <th className="py-2 px-3 border-b border-slate-200">Operador</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-150">
+                          {filteredExtTransactions.length === 0 ? (
+                            <tr>
+                              <td colSpan={8} className="text-center py-6 text-slate-400 font-medium">
+                                No se encontraron movimientos en almacenes externos con los filtros seleccionados
+                              </td>
+                            </tr>
+                          ) : (
+                            filteredExtTransactions.slice(0, 20).map(tx => {
+                              const wh = extWarehouses.find(w => w.id === tx.warehouseId);
+                              return (
+                                <tr key={tx.id} className="hover:bg-slate-50/80 transition-colors">
+                                  <td className="py-2 px-3 font-mono">
+                                    <div className="font-bold text-slate-900">{tx.id}</div>
+                                    <div className="text-[9px] text-slate-400">{new Date(tx.timestamp).toLocaleDateString('es-ES')}</div>
+                                  </td>
+                                  <td className="py-2 px-3 font-semibold text-slate-700">
+                                    <span className="font-mono bg-slate-100 text-slate-800 px-1.5 py-0.5 rounded text-[9px]">
+                                      {wh ? wh.code : tx.warehouseId}
+                                    </span>
+                                  </td>
+                                  <td className="py-2 px-3">
+                                    <span className={`px-2 py-0.5 rounded-md text-[8px] font-black font-mono uppercase ${
+                                      tx.type === 'Entrada' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                                    }`}>
+                                      {tx.type}
+                                    </span>
+                                  </td>
+                                  <td className="py-2 px-3">
+                                    <div className="font-mono font-bold text-slate-900">{tx.sku}</div>
+                                    <div className="text-[9px] text-slate-500 truncate max-w-[140px]">{tx.productName}</div>
+                                  </td>
+                                  <td className="py-2 px-3 text-right font-mono font-black text-slate-900">
+                                    {tx.qty}
+                                  </td>
+                                  <td className="py-2 px-3 text-slate-600 truncate max-w-[130px]" title={tx.sourceOrDestination}>
+                                    {tx.sourceOrDestination}
+                                  </td>
+                                  <td className="py-2 px-3 text-slate-500 truncate max-w-[110px]" title={tx.carrierOrDelivery || ''}>
+                                    {tx.carrierOrDelivery || '—'}
+                                  </td>
+                                  <td className="py-2 px-3 text-slate-500 text-[9px]">
+                                    {tx.operator}
+                                  </td>
+                                </tr>
+                              );
+                            })
+                          )}
+                          {filteredExtTransactions.length > 20 && (
+                            <tr>
+                              <td colSpan={8} className="py-2.5 px-3 text-center text-slate-400 font-mono text-[9px] bg-slate-50 font-bold">
+                                ... y otros {filteredExtTransactions.length - 20} movimientos adicionales. Presione &quot;Imprimir Reporte Oficial&quot; o descargue en Excel para la auditoría total.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {selectedReport === 'full_backup' && (
                 <div className="space-y-4">
                   <div className="flex items-center gap-2">
@@ -1244,6 +1616,20 @@ export default function ReportsCenter({
 
             {/* Action Buttons */}
             <div className="flex flex-col sm:flex-row gap-3 pt-6 border-t border-slate-100 mt-6">
+              {/* Button 1: Print Official Report / PDF */}
+              <button
+                type="button"
+                onClick={() => setIsPrintModalOpen(true)}
+                className="flex-1 bg-teal-600 hover:bg-teal-700 text-white font-extrabold text-xs py-3 px-4 rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95"
+                title="Generar e imprimir el reporte oficial con formato membretado y firmas"
+              >
+                <Printer className="h-4.5 w-4.5" />
+                {selectedReport === 'external_movements'
+                  ? 'Imprimir Movimientos de Almacén Externo (PDF)'
+                  : 'Imprimir Reporte Oficial / PDF'}
+              </button>
+
+              {/* Button 2: Export Excel */}
               <button
                 type="button"
                 onClick={() => {
@@ -1253,6 +1639,7 @@ export default function ReportsCenter({
                   else if (selectedReport === 'orders_flow') handleExportOrders();
                   else if (selectedReport === 'warehouse_sections') handleExportWarehouseSections();
                   else if (selectedReport === 'direct_dispatches') handleExportDirectDispatches();
+                  else if (selectedReport === 'external_movements') handleExportExternalMovements();
                   else if (selectedReport === 'full_backup') handleExportFullBackup();
                 }}
                 className={`flex-1 text-white font-extrabold text-xs py-3 px-4 rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95 ${
@@ -1260,6 +1647,8 @@ export default function ReportsCenter({
                     ? 'bg-emerald-600 hover:bg-emerald-700 ring-2 ring-emerald-500/20'
                     : selectedReport === 'direct_dispatches'
                     ? 'bg-amber-600 hover:bg-amber-700'
+                    : selectedReport === 'external_movements'
+                    ? 'bg-emerald-700 hover:bg-emerald-800'
                     : 'bg-emerald-600 hover:bg-emerald-700'
                 }`}
               >
@@ -1278,6 +1667,11 @@ export default function ReportsCenter({
                     <Truck className="h-4.5 w-4.5" />
                     Descargar Historial de Salidas Directas en Excel (.xlsx)
                   </>
+                ) : selectedReport === 'external_movements' ? (
+                  <>
+                    <FileSpreadsheet className="h-4.5 w-4.5" />
+                    Descargar Bitácora Externa en Excel (.xlsx)
+                  </>
                 ) : (
                   <>
                     <FileSpreadsheet className="h-4.5 w-4.5" />
@@ -1290,24 +1684,27 @@ export default function ReportsCenter({
         </div>
       </div>
 
-      {/* MODAL PRINT PREVIEW OVERLAY REMOVED */}
-      {false && (
-        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-xs flex flex-col justify-start items-center z-50 p-4 overflow-y-auto font-sans animate-fadeIn no-print">
+      {/* MODAL PRINT PREVIEW OVERLAY */}
+      {isPrintModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-xs flex flex-col justify-start items-center z-50 p-2 sm:p-4 overflow-y-auto font-sans animate-fadeIn">
           {/* Print Style Definitions */}
           <style>{`
             @media print {
               /* Show ONLY our printable report area */
+              body * {
+                visibility: hidden !important;
+              }
               #printable-report-center-area, #printable-report-center-area * {
                 visibility: visible !important;
               }
               #printable-report-center-area {
-                position: absolute;
-                left: 0;
-                top: 0;
+                position: absolute !important;
+                left: 0 !important;
+                top: 0 !important;
                 width: 100% !important;
                 max-width: 100% !important;
                 margin: 0 !important;
-                padding: 0px !important;
+                padding: 1.5cm !important;
                 border: none !important;
                 box-shadow: none !important;
                 background: white !important;
@@ -1317,27 +1714,55 @@ export default function ReportsCenter({
                 display: none !important;
               }
               body {
-                background-color: #fff;
-                color: #000;
+                background-color: #fff !important;
+                color: #000 !important;
               }
               @page {
-                size: letter;
-                margin: 1.5cm;
+                size: letter landscape;
+                margin: 1cm;
               }
             }
           `}</style>
 
-          {/* Floating Actions inside preview popup removed */}
-          <div className="w-full max-w-4xl bg-slate-800 text-white p-3 rounded-t-2xl shadow-xl flex justify-between items-center no-print">
-            <span className="text-xs font-black uppercase tracking-widest pl-3 flex items-center gap-2 font-mono text-indigo-300">
-              Vista Previa
-            </span>
+          {/* Floating Actions inside preview popup */}
+          <div className="w-full max-w-4xl bg-slate-900 text-white p-3.5 rounded-t-2xl shadow-xl flex justify-between items-center no-print border-b border-slate-700">
+            <div className="flex items-center gap-2.5">
+              <span className="p-1.5 rounded-lg bg-teal-500/20 text-teal-400">
+                <Printer className="h-4.5 w-4.5" />
+              </span>
+              <div>
+                <span className="text-xs font-black uppercase tracking-wider font-mono text-white block">
+                  Vista Previa de Impresión Oficial WMS
+                </span>
+                <span className="text-[10px] text-slate-400 font-mono">
+                  {selectedReport === 'external_movements' ? 'Movimientos y Traslados de Almacén Externo' : 'Documento Oficial con Bloques de Firma'}
+                </span>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="px-4 py-2 bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow-sm active:scale-95"
+              >
+                <Printer className="h-4 w-4" />
+                <span>Imprimir Ahora (Ctrl + P)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsPrintModalOpen(false)}
+                className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+                title="Cerrar vista previa"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
           </div>
 
           {/* Letter / A4 Styled Live Document Sheet Preview */}
           <div 
             id="printable-report-center-area"
-            className="bg-white text-slate-900 w-full max-w-4xl rounded-b-2xl shadow-2xl p-8 md:p-12 border border-slate-150 overflow-y-auto max-h-[80vh] text-left relative flex flex-col justify-between"
+            className="bg-white text-slate-900 w-full max-w-4xl rounded-b-2xl shadow-2xl p-6 sm:p-10 border border-slate-200 overflow-y-auto max-h-[82vh] text-left relative flex flex-col justify-between"
           >
             <div>
               {/* Report Header Logo & Branding */}
@@ -1356,9 +1781,13 @@ export default function ReportsCenter({
                     {selectedReport === 'inventory' && 'REPORTE DE VALORACIÓN Y EXISTENCIAS EN INVENTARIO'}
                     {selectedReport === 'audit_logs' && 'REPORTE DE HISTORIAL DE AUDITORÍA Y REGISTROS'}
                     {selectedReport === 'orders_flow' && 'REPORTE CONSOLIDADO DE PEDIDOS Y FLUJO'}
+                    {selectedReport === 'warehouse_sections' && 'REPORTE DE SUPERALMACENES Y SUBALMACENES'}
+                    {selectedReport === 'direct_dispatches' && 'REPORTE DE SALIDAS DIRECTAS DE ALMACÉN'}
+                    {selectedReport === 'external_movements' && 'REPORTE OFICIAL DE MOVIMIENTOS EN ALMACENES EXTERNOS'}
+                    {selectedReport === 'full_backup' && 'REPORTE CONSOLIDADO DE RESPALDO INTEGRAL WMS'}
                   </h1>
                   <p className="text-xs font-medium text-indigo-700 mt-1 uppercase tracking-wider font-mono">
-                    {customNotes || 'Documentación Oficial Generada desde Consola Administrativa'}
+                    {customNotes || (selectedReport === 'external_movements' ? 'Bitácora Oficial de Entradas, Salidas y Traslados en Sedes Externas' : 'Documentación Oficial Generada desde Consola Administrativa')}
                   </p>
                 </div>
 
@@ -1617,6 +2046,237 @@ export default function ReportsCenter({
                         )}
                       </tbody>
                     </table>
+                  </div>
+                </div>
+              )}
+
+              {/* REPORT TYPE 5: WAREHOUSE SECTIONS */}
+              {selectedReport === 'warehouse_sections' && (
+                <div className="space-y-6">
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="p-3 bg-slate-50 border border-slate-300 rounded-xl print-card text-center">
+                      <span className="block text-[8px] uppercase font-bold text-slate-400 font-mono tracking-wider">Superalmacenes</span>
+                      <span className="text-base font-black font-mono text-slate-900 mt-1 block">{warehouseSections.length}</span>
+                    </div>
+                    <div className="p-3 bg-indigo-50/50 border border-indigo-200 rounded-xl print-card text-center">
+                      <span className="block text-[8px] uppercase font-bold text-indigo-700 font-mono tracking-wider">Subalmacenes Totales</span>
+                      <span className="text-base font-black font-mono text-indigo-900 mt-1 block">
+                        {warehouseSections.reduce((s, w) => s + (w.subWarehouses?.length || 0), 0)}
+                      </span>
+                    </div>
+                    <div className="p-3 bg-emerald-50/50 border border-emerald-200 rounded-xl print-card text-center">
+                      <span className="block text-[8px] uppercase font-bold text-emerald-700 font-mono tracking-wider">Valuación Global</span>
+                      <span className="text-base font-black font-mono text-emerald-900 mt-1 block">
+                        {getCurrencySymbol()}{totalInventoryValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="border border-slate-300 rounded-xl overflow-hidden mt-4">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-slate-100/90 border-b border-slate-300 text-[9px] font-bold text-slate-600 uppercase tracking-wider font-mono">
+                          <th className="py-2.5 px-3 border-r border-slate-300">Código</th>
+                          <th className="py-2.5 px-3 border-r border-slate-300">Superalmacén</th>
+                          <th className="py-2.5 px-3 border-r border-slate-300">Giro</th>
+                          <th className="py-2.5 px-3 border-r border-slate-300">Ubicación</th>
+                          <th className="py-2.5 px-3 border-r border-slate-300">Subalmacenes</th>
+                          <th className="py-2.5 px-3 text-right">SKUs Alojad.</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200 text-[10px] font-sans">
+                        {warehouseSections.map(wh => {
+                          const whItems = inventory.filter(item => getSkuWarehouseSection(item).id === wh.id);
+                          return (
+                            <tr key={wh.id} className="hover:bg-slate-50/20">
+                              <td className="py-2 px-3 font-mono font-bold text-slate-900 border-r border-slate-200">{wh.code}</td>
+                              <td className="py-2 px-3 border-r border-slate-200 font-bold text-slate-800">{wh.name}</td>
+                              <td className="py-2 px-3 border-r border-slate-200 text-slate-600">{wh.sectionType}</td>
+                              <td className="py-2 px-3 border-r border-slate-200 text-slate-600">{wh.facilityLocation}</td>
+                              <td className="py-2 px-3 border-r border-slate-200 text-slate-600 font-mono text-[9px]">
+                                {(wh.subWarehouses || []).map(s => s.name).join(', ') || 'Ninguno'}
+                              </td>
+                              <td className="py-2 px-3 text-right font-mono font-bold text-slate-900">{whItems.length}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* REPORT TYPE 6: DIRECT DISPATCHES */}
+              {selectedReport === 'direct_dispatches' && (
+                <div className="space-y-6">
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="p-3 bg-slate-50 border border-slate-300 rounded-xl print-card text-center">
+                      <span className="block text-[8px] uppercase font-bold text-slate-400 font-mono tracking-wider">Salidas Directas</span>
+                      <span className="text-base font-black font-mono text-slate-900 mt-1 block">{directDispatchesList.length}</span>
+                    </div>
+                    <div className="p-3 bg-amber-50/50 border border-amber-200 rounded-xl print-card text-center">
+                      <span className="block text-[8px] uppercase font-bold text-amber-700 font-mono tracking-wider">Unidades con Salida</span>
+                      <span className="text-base font-black font-mono text-amber-900 mt-1 block">
+                        {directDispatchesList.reduce((sum, d) => sum + (d.qty || d.quantity || 0), 0).toLocaleString()}
+                      </span>
+                    </div>
+                    <div className="p-3 bg-emerald-50/50 border border-emerald-200 rounded-xl print-card text-center">
+                      <span className="block text-[8px] uppercase font-bold text-emerald-700 font-mono tracking-wider">Valor Económico</span>
+                      <span className="text-base font-black font-mono text-emerald-900 mt-1 block">
+                        {getCurrencySymbol()}{directDispatchesList.reduce((sum, d) => sum + ((d.qty || d.quantity || 0) * convertItemCost(d.cost || 0)), 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="border border-slate-300 rounded-xl overflow-hidden mt-4">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-slate-100/90 border-b border-slate-300 text-[9px] font-bold text-slate-600 uppercase tracking-wider font-mono">
+                          <th className="py-2.5 px-3 border-r border-slate-300">Folio</th>
+                          <th className="py-2.5 px-3 border-r border-slate-300">Fecha</th>
+                          <th className="py-2.5 px-3 border-r border-slate-300">SKU</th>
+                          <th className="py-2.5 px-3 border-r border-slate-300">Producto</th>
+                          <th className="py-2.5 px-3 border-r border-slate-300 text-right">Cant.</th>
+                          <th className="py-2.5 px-3 border-r border-slate-300">Destino</th>
+                          <th className="py-2.5 px-3">Medio / Chofer</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200 text-[10px] font-sans">
+                        {directDispatchesList.slice(0, 20).map((disp, idx) => (
+                          <tr key={disp.id || idx} className="hover:bg-slate-50/20">
+                            <td className="py-2 px-3 font-mono font-bold text-slate-900 border-r border-slate-200">{disp.folio || disp.id}</td>
+                            <td className="py-2 px-3 border-r border-slate-200 font-mono text-slate-500">{disp.date || disp.timestamp}</td>
+                            <td className="py-2 px-3 border-r border-slate-200 font-mono font-bold">{disp.sku}</td>
+                            <td className="py-2 px-3 border-r border-slate-200 font-medium">{disp.productName || disp.name}</td>
+                            <td className="py-2 px-3 border-r border-slate-200 text-right font-mono font-extrabold text-slate-900">{disp.qty || disp.quantity}</td>
+                            <td className="py-2 px-3 border-r border-slate-200 text-slate-700">{disp.destination || disp.client || 'Mostrador'}</td>
+                            <td className="py-2 px-3 text-slate-600 text-[9px]">{disp.deliveryMethod || 'Retiro'} {disp.carrier ? `(${disp.carrier})` : ''}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* REPORT TYPE 7: EXTERNAL WAREHOUSE MOVEMENTS (CRITICAL REQUIREMENT) */}
+              {selectedReport === 'external_movements' && (
+                <div className="space-y-6">
+                  {/* Summary row */}
+                  <div className="grid grid-cols-4 gap-3">
+                    <div className="p-3 bg-slate-50 border border-slate-300 rounded-xl print-card text-center">
+                      <span className="block text-[8px] uppercase font-bold text-slate-400 font-mono tracking-wider">Movimientos Totales</span>
+                      <span className="text-base font-black font-mono text-slate-900 mt-1 block">{filteredExtTransactions.length}</span>
+                    </div>
+                    <div className="p-3 bg-emerald-50/50 border border-emerald-300 rounded-xl print-card text-center">
+                      <span className="block text-[8px] uppercase font-bold text-emerald-700 font-mono tracking-wider">Entradas Registradas</span>
+                      <span className="text-base font-black font-mono text-emerald-800 mt-1 block">
+                        {filteredExtTransactions.filter(t => t.type === 'Entrada').length} ({filteredExtTransactions.filter(t => t.type === 'Entrada').reduce((s, t) => s + t.qty, 0)} uds)
+                      </span>
+                    </div>
+                    <div className="p-3 bg-rose-50/50 border border-rose-300 rounded-xl print-card text-center">
+                      <span className="block text-[8px] uppercase font-bold text-rose-700 font-mono tracking-wider">Salidas Registradas</span>
+                      <span className="text-base font-black font-mono text-rose-800 mt-1 block">
+                        {filteredExtTransactions.filter(t => t.type === 'Salida').length} ({filteredExtTransactions.filter(t => t.type === 'Salida').reduce((s, t) => s + t.qty, 0)} uds)
+                      </span>
+                    </div>
+                    <div className="p-3 bg-teal-50/50 border border-teal-300 rounded-xl print-card text-center">
+                      <span className="block text-[8px] uppercase font-bold text-teal-700 font-mono tracking-wider">Unidades Movilizadas</span>
+                      <span className="text-base font-black font-mono text-teal-900 mt-1 block">
+                        {filteredExtTransactions.reduce((s, t) => s + t.qty, 0).toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Filter Metadata Subhead */}
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex flex-wrap justify-between items-center text-[10px] font-mono text-slate-600 gap-2">
+                    <div><strong>Almacén Consultado:</strong> {extWhFilter === 'all' ? `Todos los Almacenes Externos (${extWarehouses.length})` : (extWarehouses.find(w => w.id === extWhFilter)?.name || extWhFilter)}</div>
+                    <div><strong>Filtro de Tipo:</strong> {extTypeFilter === 'all' ? 'Entradas y Salidas' : extTypeFilter}</div>
+                    <div><strong>Criterio de Búsqueda:</strong> {extSearchTerm || 'Todos los registros'}</div>
+                  </div>
+
+                  {/* External Movements Table */}
+                  <div className="border border-slate-300 rounded-xl overflow-hidden mt-4">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-slate-100/90 border-b border-slate-300 text-[9px] font-bold text-slate-600 uppercase tracking-wider font-mono">
+                          <th className="py-2.5 px-3 border-r border-slate-300">Folio Transacción</th>
+                          <th className="py-2.5 px-3 border-r border-slate-300">Fecha y Hora</th>
+                          <th className="py-2.5 px-3 border-r border-slate-300">Almacén Externo</th>
+                          <th className="py-2.5 px-3 border-r border-slate-300">Tipo</th>
+                          <th className="py-2.5 px-3 border-r border-slate-300">Código SKU</th>
+                          <th className="py-2.5 px-3 border-r border-slate-300">Descripción del Artículo</th>
+                          <th className="py-2.5 px-3 border-r border-slate-300 text-right">Cant.</th>
+                          <th className="py-2.5 px-3 border-r border-slate-300">Origen / Destino</th>
+                          <th className="py-2.5 px-3 border-r border-slate-300">Transportista / Guía</th>
+                          <th className="py-2.5 px-3">Operario</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200 text-[10px] font-sans">
+                        {filteredExtTransactions.length === 0 ? (
+                          <tr>
+                            <td colSpan={10} className="py-6 text-center text-slate-400 font-mono">
+                              No hay registros de movimientos en almacenes externos que coincidan con los criterios de búsqueda.
+                            </td>
+                          </tr>
+                        ) : (
+                          filteredExtTransactions.map((tx) => {
+                            const wh = extWarehouses.find(w => w.id === tx.warehouseId);
+                            return (
+                              <tr key={tx.id} className="hover:bg-slate-50/20">
+                                <td className="py-2 px-3 font-mono font-bold text-slate-900 border-r border-slate-200">{tx.id}</td>
+                                <td className="py-2 px-3 border-r border-slate-200 font-mono text-slate-600">
+                                  {new Date(tx.timestamp).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' })}
+                                </td>
+                                <td className="py-2 px-3 border-r border-slate-200 font-semibold text-slate-800">
+                                  {wh ? `[${wh.code}] ${wh.name}` : tx.warehouseId}
+                                </td>
+                                <td className="py-2 px-3 border-r border-slate-200 font-mono font-bold">
+                                  {tx.type === 'Entrada' ? (
+                                    <span className="text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded text-[8px] uppercase">ENTRADA</span>
+                                  ) : (
+                                    <span className="text-rose-700 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded text-[8px] uppercase">SALIDA</span>
+                                  )}
+                                </td>
+                                <td className="py-2 px-3 font-mono font-bold text-slate-900 border-r border-slate-200">{tx.sku}</td>
+                                <td className="py-2 px-3 border-r border-slate-200 font-medium text-slate-800">{tx.productName}</td>
+                                <td className="py-2 px-3 border-r border-slate-200 text-right font-mono font-extrabold text-slate-900">{tx.qty}</td>
+                                <td className="py-2 px-3 border-r border-slate-200 text-slate-700">{tx.sourceOrDestination}</td>
+                                <td className="py-2 px-3 border-r border-slate-200 text-slate-600 font-mono text-[9px]">{tx.carrierOrDelivery || 'No especificado'}</td>
+                                <td className="py-2 px-3 text-slate-600 text-[9px]">{tx.operator}</td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* 3 Formal Signature Columns */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 pt-8 mt-6 border-t-2 border-slate-300">
+                    <div className="border border-slate-200 rounded-xl p-4 text-center bg-slate-50/50">
+                      <div className="h-14 border-b border-dashed border-slate-400 mb-2"></div>
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-700 block font-mono">
+                        Responsable Almacén Externo
+                      </span>
+                      <span className="text-[8px] text-slate-400 block mt-0.5">Nombre, Firma y Sello</span>
+                    </div>
+
+                    <div className="border border-slate-200 rounded-xl p-4 text-center bg-slate-50/50">
+                      <div className="h-14 border-b border-dashed border-slate-400 mb-2"></div>
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-700 block font-mono">
+                        Transportista / Mensajería
+                      </span>
+                      <span className="text-[8px] text-slate-400 block mt-0.5">Firma de Conformidad de Entrega</span>
+                    </div>
+
+                    <div className="border border-slate-200 rounded-xl p-4 text-center bg-slate-50/50">
+                      <div className="h-14 border-b border-dashed border-slate-400 mb-2"></div>
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-700 block font-mono">
+                        Auditoría WMS / Control Interno
+                      </span>
+                      <span className="text-[8px] text-slate-400 block mt-0.5">Visto Bueno y Cierre de Movimiento</span>
+                    </div>
                   </div>
                 </div>
               )}

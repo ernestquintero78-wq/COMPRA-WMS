@@ -21,7 +21,8 @@ import {
   Clock,
   Database,
   ChevronRight,
-  Settings
+  Settings,
+  Building2
 } from 'lucide-react';
 
 interface ManualSection {
@@ -76,14 +77,14 @@ export function UserManual() {
       steps: [
         'Vaya a la pestaña "Entradas" en el menú principal.',
         'Seleccione el sub-módulo "Escáner de Recepción" para realizar la entrada rápida de inventario.',
-        'Haga clic en la simulación de lectura de un código de barras (ej: 7501020304012) o ingréselo manualmente.',
+        'Escriba la descripción del artículo para seleccionarlo con sugerencias en vivo, o escanee su código de barras / SKU.',
         'El sistema identificará automáticamente el artículo (ej: Industrial Controller i7). Ingrese la cantidad recibida.',
         'Utilice el algoritmo para buscar una celda libre recomendada, o bien diríjase a la pestaña "Guardado Optimizado" (Putaway Optimizer).',
         'El optimizador de Putaway evaluará la categoría del SKU y las capacidades físicas (peso, volumen) de las celdas disponibles para proponerle la ubicación más segura y lógica.',
         'Haga clic en "Confirmar Guardado (Commit)" para consolidar el stock en la celda y enviar los datos a Supabase.'
       ],
       fields: [
-        { name: 'Código de Barras (Barcode)', description: 'Código único EAN/UPC que identifica el producto recibido.' },
+        { name: 'Código de Barras (Barcode) / Descripción', description: 'Código único EAN/UPC o descripción textual que identifica el producto recibido.' },
         { name: 'Celda Destino (Bin ID)', description: 'Coordenada del almacén donde se colocará el producto físico.' },
         { name: 'Putaway Score', description: 'Porcentaje de idoneidad calculado algorítmicamente para el guardado (priorizando niveles bajos para cargas pesadas).' }
       ],
@@ -103,7 +104,7 @@ export function UserManual() {
       objective: 'Agilizar al máximo el flujo de salidas de almacén permitiendo egresos inmediatos en 3 pasos sencillos, deduciendo el stock y celdas físicas en tiempo real.',
       steps: [
         'Vaya a la pestaña "Salidas" en el menú lateral.',
-        'Paso 1 (Producto): Escanee el código de barras/SKU con lector o seleccione el artículo directamente desde el catálogo visual con stock disponible y celdas de picking en vivo.',
+        'Paso 1 (Producto): Escriba la descripción del artículo para seleccionarlo al instante desde las sugerencias interactivas, escanee su código de barras con lector o elija del catálogo visual con stock disponible y celdas de picking en vivo.',
         'Indique la cantidad de salida utilizando los controles o botones rápidos (+1, +5, +10, Máx).',
         'Paso 2 (Destino): Ingrese el destino, cliente o sucursal (o use los chips rápidos: Cliente Mostrador, Sucursal Norte, Envío a Domicilio, etc.).',
         'Paso 3 (Medio de Entrega): Elija el transporte (Reparto Local, Paquetería Externa, Entrega en Mostrador, Transporte Pesado, Mensajería Express) y opcionalmente número de guía o notas.',
@@ -132,7 +133,7 @@ export function UserManual() {
       steps: [
         'Vaya a la pestaña "Movimientos" en el menú lateral.',
         'El panel mostrará el "Transferidor de Celdas".',
-        'Seleccione la "Celda de Origen" donde se encuentra el inventario actual de un artículo.',
+        'Escriba la descripción del insumo o SKU en el buscador interactivo para ver sugerencias y celdas de almacenamiento en tiempo real, o seleccione la celda de origen directamente del menú.',
         'Seleccione la "Celda de Destino" (que debe estar vacía o contener el mismo SKU).',
         'Ingrese la cantidad de unidades que trasladará físicamente.',
         'Haga clic en el botón "Confirmar Reubicación Interna".',
@@ -159,7 +160,7 @@ export function UserManual() {
       steps: [
         'Vaya a la pestaña "Conteos Cíclicos" en el menú principal.',
         'En la pestaña "Efectuar Conteo", observará la "Sesión de Conteo Activa". El gráfico circular central muestra el porcentaje de SKUs auditados en esta sesión.',
-        'En el listado de SKUs a la derecha, seleccione el SKU que desea auditar haciendo clic en él, o use el escáner para registrar el código de barras.',
+        'Escriba la descripción del artículo en la consola de auditoría para seleccionarlo mediante sugerencias en vivo, o escanee su código de barras / SKU, o selecciónelo del listado lateral.',
         'El sistema cargará el SKU en la consola de auditoría. Ingrese la cantidad real de piezas que ha contado físicamente en los estantes.',
         'Haga clic en el botón "Confirmar Registro de Auditoría (Firma)".',
         'Si la cantidad física difiere del stock registrado en el sistema, el WMS calculará la desviación (positiva o negativa) y actualizará automáticamente la cantidad del SKU.',
@@ -175,6 +176,33 @@ export function UserManual() {
         'Se recomienda realizar conteos cíclicos diariamente sobre productos de alta rotación (Clasificación A).',
         'Si encuentra una desviación negativa constante para un SKU, investigue la estación de empaque o reporte fallas en las etiquetas.',
         'Al iniciar una nueva campaña de auditoría completa, haga clic en "Reiniciar Sesión" para limpiar el gráfico de avance.'
+      ]
+    },
+    {
+      id: 'almacen-externo',
+      title: 'Gestión de Almacenes Externos',
+      category: 'operacion',
+      icon: Building2,
+      summary: 'Administración ágil y simplificada de bodegas satélite, operadores 3PL, depósitos de obra y almacenes externos: registro de entradas, salidas, control de inventario e impresión de reportes oficiales.',
+      objective: 'Proporcionar una gestión descentralizada y sencilla de inventarios en ubicaciones externas con trazabilidad completa de transferencias, salidas directas a clientes y formatos oficiales imprimibles.',
+      steps: [
+        'Vaya a la pestaña "Almacén Externo" en la sección de Operaciones Básicas.',
+        'En "Inventarios en Almacenes", consulte el stock disponible en cada almacén externo, busque por descripción o SKU, filtre por categorías o detecte materiales con stock crítico.',
+        'Para registrar una Entrada: Vaya a la pestaña "Registrar Entrada", escriba la descripción del insumo o escanee su código de barras con el selector interactivo inteligente, elija el almacén destino, indique la cantidad y procedencia (Traspaso o Proveedor) y confirme la operación.',
+        'Para registrar una Salida: Vaya a la pestaña "Registrar Salida", seleccione el artículo por descripción o escaneo, elija el almacén de origen, especifique el cliente/destino final y genere la salida inmediata con deducción de existencias.',
+        'En "Directorio de Almacenes", cree nuevas ubicaciones externas (3PL, Satélites, Depósitos de Obra) con sus datos de contacto y responsables.',
+        'Para Imprimir Reportes: Haga clic en el botón "Imprimir Reporte" o acceda a la pestaña "Centro de Reportes & Firmas". Seleccione el tipo de formato (Inventario Valorizado, Bitácora de Movimientos, Stock Mínimo o Vale de Traslado), visualice la vista previa con membrete y presione "Imprimir / Guardar en PDF".'
+      ],
+      fields: [
+        { name: 'Almacén Externo', description: 'Ubicación física remota, satélite o proveedor 3PL donde se resguardan materiales.' },
+        { name: 'Entrada Externa', description: 'Ingreso documentado de material a una bodega externa con asignación de procedencia y guía.' },
+        { name: 'Salida Externa', description: 'Egreso de material desde la bodega externa hacia clientes, proyectos o líneas de ensamble.' },
+        { name: 'Formatos Imprimibles', description: 'Hojas oficiales de inventario y vales con membrete WMS y recuadros para firmas de responsabilidad.' }
+      ],
+      bestPractices: [
+        'Utilice el buscador predictivo escribiendo las primeras letras de la descripción del material para seleccionarlo sin necesidad de memorizar códigos SKU.',
+        'Descargue periódicamente el reporte consolidado en Excel (.xlsx) para auditorías contables de inventario externo.',
+        'Genere los vales de remisión imprimibles para que el transportista firme la recepción del material.'
       ]
     },
     {
@@ -211,17 +239,20 @@ export function UserManual() {
       steps: [
         'Vaya a la pestaña "Centro de Reportes" en el menú principal.',
         'Observe las métricas resumidas que calculan el valor económico total del inventario activo y el costo promedio por SKU.',
-        'Utilice la barra de búsqueda de reportes rápidos para filtrar el reporte de interés.',
-        'Haga clic en el botón "Exportar a Excel (XLSX)" para generar un archivo descargable de auditoría estructurado en pestañas de Celdas, Inventario, Órdenes y Logs.',
-        'O use los botones específicos para descargar datos en formato JSON nativo si requiere importarlos en sistemas ERP alternos.'
+        'En la lista lateral de reportes disponibles, seleccione "7. Movimientos de Almacén Externo" para acceder a la bitácora transaccional de todas las sedes satélites, 3PL y depósitos de obra.',
+        'Filtre por almacén externo específico (o todos), tipo de movimiento (Entradas / Salidas) y búsqueda rápida por SKU, producto o chofer.',
+        'Haga clic en "Imprimir Movimientos de Almacén Externo (PDF)" para abrir la vista previa oficial con membrete WMS y bloques de triple firma (Responsable de Almacén Externo, Transportista y Auditoría WMS), y presione "Imprimir Ahora (Ctrl + P)".',
+        'O presione "Descargar Bitácora Externa en Excel (.xlsx)" para obtener el libro contable de operaciones remotas.'
       ],
       fields: [
         { name: 'Costo Valorizado', description: 'Suma económica del costo unitario del SKU multiplicado por las existencias reales.' },
+        { name: 'Bitácora Externa Imprimible', description: 'Acta oficial de movimientos en almacenes remotos y satélites con firmas de responsabilidad legal.' },
         { name: 'Firma de Respaldo', description: 'Sello electrónico estampado en la parte inferior del archivo exportado que registra fecha y hora UTC.' }
       ],
       bestPractices: [
         'Exporte un reporte estructurado de inventario al final de cada turno y guárdelo como respaldo histórico de auditoría.',
-        'El reporte XLSX de auditoría es totalmente compatible con Microsoft Excel, Google Sheets y LibreOffice.'
+        'Imprima las bitácoras de almacén externo con sus tres firmas de custodia cada vez que se efectúen traspasos inter-almacenes o recepciones de flota pesada.',
+        'El reporte XLSX de auditoría y respaldo de 9 hojas es totalmente compatible con Microsoft Excel, Google Sheets y LibreOffice.'
       ]
     },
     {

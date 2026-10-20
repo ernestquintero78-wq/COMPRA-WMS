@@ -18,6 +18,7 @@ import {
   Info,
   FileSpreadsheet
 } from 'lucide-react';
+import { ArticleSuggestionInput } from './ArticleSuggestionInput';
 
 interface MovementsManagerProps {
   bins: Bin[];
@@ -62,6 +63,7 @@ export const MovementsManager: React.FC<MovementsManagerProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
+  const [articleSearchQuery, setArticleSearchQuery] = useState('');
 
   // Export supplies by location to Excel
   const handleDownloadInsumosUbicacion = () => {
@@ -325,6 +327,7 @@ export const MovementsManager: React.FC<MovementsManagerProps> = ({
       setTargetBinId('');
       setQtyToMove(0);
       setTargetSearchQuery('');
+      setArticleSearchQuery('');
     } catch (err: any) {
       console.error(err);
       setErrorMessage('Hubo un problema al aplicar el movimiento en la hoja de cálculo: ' + err.message);
@@ -468,33 +471,76 @@ export const MovementsManager: React.FC<MovementsManagerProps> = ({
 
           <form onSubmit={handleExecuteMovement} className="space-y-5">
             
-            {/* STEP 1: SELECT SOURCE BIN */}
-            <div className="space-y-2">
-              <label className="block text-[10px] uppercase font-bold text-slate-400 tracking-wider flex items-center gap-1.5">
-                <span className="h-4 w-4 rounded-full bg-slate-900 text-white flex items-center justify-center font-bold font-mono text-[9px]">1</span>
-                Celda de Origen (Donde está el producto)
-              </label>
-              
-              <select
-                value={sourceBinId}
-                onChange={(e) => {
-                  setSourceBinId(e.target.value);
+            {/* STEP 1: SELECT SOURCE BIN / MATERIAL */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="block text-[10px] uppercase font-bold text-slate-500 tracking-wider flex items-center gap-1.5">
+                  <span className="h-4 w-4 rounded-full bg-indigo-600 text-white flex items-center justify-center font-bold font-mono text-[9px]">1</span>
+                  Artículo & Celda de Origen
+                </label>
+                <span className="text-[10px] text-indigo-600 font-mono font-bold">
+                  Búsqueda por descripción o selección directa
+                </span>
+              </div>
+
+              {/* Búsqueda por descripción o escaneo de código */}
+              <ArticleSuggestionInput
+                value={articleSearchQuery}
+                onChange={(val) => setArticleSearchQuery(val)}
+                onSelectProduct={(item, binId) => {
+                  const matchingBins = bins.filter(b => b.occupiedSku === item.sku && (b.occupiedQty || 0) > 0);
+                  const selectedTargetBin = binId || (matchingBins[0] ? matchingBins[0].id : '');
+                  setSourceBinId(selectedTargetBin);
+                  setArticleSearchQuery(`${item.name} (${item.sku})`);
                   setQtyToMove(0);
                   setErrorMessage('');
                   setSuccessMessage('');
                 }}
-                className="w-full text-xs font-semibold rounded-xl border border-slate-200 bg-white p-3 text-slate-700 focus:border-indigo-500 focus:outline-none transition hover:border-slate-300"
-              >
-                <option value="">-- Seleccionar Celda con Stock Disponible --</option>
-                {occupiedBins.map((b) => {
-                  const prod = inventory.find(i => i.sku === b.occupiedSku);
-                  return (
-                    <option key={b.id} value={b.id}>
-                      {b.id} - {b.occupiedSku} ({b.occupiedQty} uds) {prod ? ` - ${prod.name.substring(0, 30)}...` : ''}
-                    </option>
-                  );
-                })}
-              </select>
+                inventory={inventory}
+                bins={bins}
+                themeColor="indigo"
+                filterOnlyWithStock={true}
+                showBinsDetail={true}
+                showDirectBinSelection={true}
+                allowBinScanning={true}
+                label="Identificar Material o Celda de Origen:"
+                placeholder="Escriba la descripción del insumo o escanee código de barras / celda..."
+                helperText="Puede escribir la descripción del material con sugerencias inteligentes, o escanear con pistola / cámara el código del artículo o de la celda."
+              />
+
+              <div className="space-y-1 pt-1">
+                <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider block">
+                  O seleccione la celda directamente del listado con existencias:
+                </span>
+                <select
+                  value={sourceBinId}
+                  onChange={(e) => {
+                    const selectedBin = e.target.value;
+                    setSourceBinId(selectedBin);
+                    const binItem = bins.find(b => b.id === selectedBin);
+                    if (binItem && binItem.occupiedSku) {
+                      const prod = inventory.find(i => i.sku === binItem.occupiedSku);
+                      if (prod) setArticleSearchQuery(`${prod.name} (${prod.sku})`);
+                    } else {
+                      setArticleSearchQuery('');
+                    }
+                    setQtyToMove(0);
+                    setErrorMessage('');
+                    setSuccessMessage('');
+                  }}
+                  className="w-full text-xs font-semibold rounded-xl border border-slate-200 bg-white p-3 text-slate-700 focus:border-indigo-500 focus:outline-none transition hover:border-slate-300"
+                >
+                  <option value="">-- Seleccionar Celda con Stock Disponible --</option>
+                  {occupiedBins.map((b) => {
+                    const prod = inventory.find(i => i.sku === b.occupiedSku);
+                    return (
+                      <option key={b.id} value={b.id}>
+                        {b.id} - {b.occupiedSku} ({b.occupiedQty} uds) {prod ? ` - ${prod.name.substring(0, 30)}...` : ''}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
 
               {/* Source Bin details card */}
               {sourceBinObj && sourceProductObj && (

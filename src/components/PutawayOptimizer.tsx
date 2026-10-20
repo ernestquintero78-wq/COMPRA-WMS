@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Bin, InventoryItem } from '../types';
 import { Workflow, Boxes, Loader2, ArrowRightLeft, ShieldAlert, Check } from 'lucide-react';
+import { ArticleSuggestionInput } from './ArticleSuggestionInput';
 
 interface PutawayOptimizerProps {
   bins: Bin[];
@@ -26,6 +27,7 @@ export const PutawayOptimizer: React.FC<PutawayOptimizerProps> = ({
   onCommitPutaway
 }) => {
   const [sku, setSku] = useState('');
+  const [skuQuery, setSkuQuery] = useState('');
   const [quantity, setQuantity] = useState<number>(10);
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [putawayPlan, setPutawayPlan] = useState<PutawayPlanResponse | null>(null);
@@ -163,21 +165,27 @@ export const PutawayOptimizer: React.FC<PutawayOptimizerProps> = ({
       {/* Putaway Receiving Intake Form */}
       <form onSubmit={handleCalculatePutaway} className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end mb-8">
         <div>
-          <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
-            Seleccionar SKU de Entrada
-          </label>
-          <select
-            value={sku}
-            onChange={(e) => setSku(e.target.value)}
-            className="w-full text-xs font-semibold rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none"
-          >
-            <option value="">-- Seleccionar SKU de Stock --</option>
-            {inventory.map((item) => (
-              <option key={item.sku} value={item.sku}>
-                {item.sku} ({item.name})
-              </option>
-            ))}
-          </select>
+          <ArticleSuggestionInput
+            value={skuQuery}
+            onChange={(val) => {
+              setSkuQuery(val);
+              // Check if matches SKU exactly
+              const exact = inventory.find(i => i.sku.toLowerCase() === val.trim().toLowerCase());
+              if (exact) setSku(exact.sku);
+            }}
+            onSelectProduct={(item) => {
+              setSku(item.sku);
+              setSkuQuery(`${item.name} (${item.sku})`);
+              setErrorMsg('');
+            }}
+            inventory={inventory}
+            bins={bins}
+            themeColor="blue"
+            label="Artículo de Entrada: Escribir Descripción o Escanear"
+            placeholder="Escriba descripción (ej. Controlador...) o escanee código..."
+            showBinsDetail={true}
+            required
+          />
         </div>
 
         <div>

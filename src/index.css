@@ -46,6 +46,17 @@
   .print-only {
     display: block !important;
   }
+
+  .printable-report {
+    padding: 1.5rem !important;
+    margin: 0 !important;
+    overflow: visible !important;
+    max-height: none !important;
+    width: 100% !important;
+    display: block !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
 }
 
 .print-only {

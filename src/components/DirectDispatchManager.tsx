@@ -28,6 +28,7 @@ import {
   Sparkles,
   ClipboardList
 } from 'lucide-react';
+import { ArticleSuggestionInput } from './ArticleSuggestionInput';
 
 export interface DirectDispatchRecord {
   id: string;
@@ -217,20 +218,23 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
     return Array.from(set);
   }, [inventory]);
 
-  // Handle barcode / SKU scanning
+  // Handle barcode / SKU / description search
   const handleScanOrSubmitCode = (code: string) => {
     const clean = code.trim().toLowerCase();
     if (!clean) return;
 
-    // Search by SKU or barcode
+    // Search by SKU, barcode, exact name, or partial description
     const match = inventory.find(i => 
       i.sku.toLowerCase() === clean || 
-      (i.barcode && i.barcode.toLowerCase() === clean)
+      (i.barcode && i.barcode.toLowerCase() === clean) ||
+      i.name.toLowerCase() === clean
+    ) || inventory.find(i =>
+      clean.length >= 3 && (i.name.toLowerCase().includes(clean) || (i.description || '').toLowerCase().includes(clean))
     );
 
     if (match) {
       setSelectedSku(match.sku);
-      setBarcodeInput('');
+      setBarcodeInput(match.name);
       setFeedback({
         type: 'ok',
         text: `Producto identificado: ${match.name} (SKU: ${match.sku}). Stock: ${match.qty} uds.`
@@ -240,7 +244,7 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
     } else {
       setFeedback({
         type: 'err',
-        text: `No se encontró ningún producto con el código o SKU "${code}".`
+        text: `No se encontró ningún producto con el código, descripción o SKU "${code}".`
       });
     }
   };
@@ -541,42 +545,45 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
                 </button>
               </div>
 
-              {/* Input de Escaneo Rápido */}
+              {/* Input de Búsqueda y Escaneo con Sugerencias en Vivo */}
               <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-700 block">
-                  Escanear Código de Barras o Ingresar SKU:
-                </label>
-                <div className="flex gap-2">
-                  <div className="relative flex-1">
-                    <Scan className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-400" />
-                    <input
-                      type="text"
+                <div className="flex gap-2 items-end">
+                  <div className="flex-1">
+                    <ArticleSuggestionInput
                       value={barcodeInput}
-                      onChange={(e) => {
-                        setBarcodeInput(e.target.value);
-                        // Fast detection if exact match
-                        if (e.target.value.trim().length >= 3) {
+                      onChange={(val) => {
+                        setBarcodeInput(val);
+                        // Fast exact match
+                        if (val.trim().length >= 3) {
                           const m = inventory.find(i => 
-                            i.sku.toLowerCase() === e.target.value.trim().toLowerCase() ||
-                            (i.barcode && i.barcode.toLowerCase() === e.target.value.trim().toLowerCase())
+                            i.sku.toLowerCase() === val.trim().toLowerCase() ||
+                            (i.barcode && i.barcode.toLowerCase() === val.trim().toLowerCase())
                           );
                           if (m) setSelectedSku(m.sku);
                         }
                       }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          handleScanOrSubmitCode(barcodeInput);
-                        }
+                      onSelectProduct={(item) => {
+                        setSelectedSku(item.sku);
+                        setBarcodeInput(item.name);
+                        setFeedback({
+                          type: 'ok',
+                          text: `✓ Artículo seleccionado: ${item.name} (${item.sku}). Stock: ${item.qty} uds.`
+                        });
+                        if (quantity <= 0) setQuantity(1);
                       }}
-                      placeholder="Escanee con pistola o teclee SKU (ej. SKU-001)..."
-                      className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-250 rounded-2xl text-xs font-mono font-bold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition"
+                      inventory={inventory}
+                      bins={bins}
+                      themeColor="amber"
+                      label="Escanear Código de Barras o Escribir Descripción / SKU:"
+                      placeholder="Escriba descripción (ej. Sensor, Batería, Controlador...) o escanee EAN / SKU"
+                      showBinsDetail={true}
                     />
                   </div>
                   <button
                     type="button"
                     onClick={() => handleScanOrSubmitCode(barcodeInput)}
-                    className="px-4 py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-2xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 shadow-xs"
+                    className="mb-0.5 px-4 py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 shadow-xs shrink-0 active:scale-95"
+                    title="Buscar e identificar producto"
                   >
                     <span>Identificar</span>
                   </button>

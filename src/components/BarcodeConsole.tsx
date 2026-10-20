@@ -25,6 +25,7 @@ import {
   Compass,
   Tag
 } from 'lucide-react';
+import { ArticleSuggestionInput } from './ArticleSuggestionInput';
 
 interface BarcodeConsoleProps {
   bins: Bin[];
@@ -83,6 +84,7 @@ export const BarcodeConsole: React.FC<BarcodeConsoleProps> = ({
   
   // Cycle count specific
   const [physicalCount, setPhysicalCount] = useState<number>(0);
+  const physicalCountInputRef = React.useRef<HTMLInputElement>(null);
 
   // Operation status message tracking
   const [feedbackMsg, setFeedbackMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
@@ -99,16 +101,30 @@ export const BarcodeConsole: React.FC<BarcodeConsoleProps> = ({
   const [quickSupplier, setQuickSupplier] = useState('');
   const [isSavingQuickSku, setIsSavingQuickSku] = useState(false);
 
-  // Helper to lookup barcode or SKU with robust string cleaning
+  // Helper to lookup barcode, SKU, name, or description with robust string cleaning
   const findProductByBarcode = (code: string) => {
     if (!code) return null;
     const clean = code.trim().replace(/[\r\n]/g, '').toLowerCase();
     if (!clean) return null;
-    return inventory.find(i => {
+    // 1. Exact match on barcode, SKU, or name
+    const exactMatch = inventory.find(i => {
       const bClean = (i.barcode || '').trim().replace(/[\r\n]/g, '').toLowerCase();
       const sClean = (i.sku || '').trim().replace(/[\r\n]/g, '').toLowerCase();
-      return bClean === clean || sClean === clean;
+      const nClean = (i.name || '').trim().toLowerCase();
+      return bClean === clean || sClean === clean || nClean === clean;
     });
+    if (exactMatch) return exactMatch;
+
+    // 2. Substring match on name or description if user typed >= 3 chars
+    if (clean.length >= 3) {
+      return inventory.find(i => {
+        const nClean = (i.name || '').trim().toLowerCase();
+        const dClean = (i.description || '').trim().toLowerCase();
+        return nClean.includes(clean) || dClean.includes(clean);
+      }) || null;
+    }
+
+    return null;
   };
 
   // Clean current scanned input
@@ -656,38 +672,27 @@ export const BarcodeConsole: React.FC<BarcodeConsoleProps> = ({
               <div className="bg-blue-50/60 rounded-2xl p-3.5 border border-blue-150 text-[11px] text-blue-900 leading-relaxed flex items-start gap-2.5">
                 <Info className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
                 <div>
-                  <strong>Operación de Entradas:</strong> Escanee el código de barras del producto. Si no tiene registro, la plataforma lo advertirá al instante y le permitirá darlo de alta. Si ya tiene registro, <strong>le indicará en qué posición se encuentra actualmente y a qué celda debe ir</strong> (Putaway sugerido).
+                  <strong>Operación de Entradas:</strong> Puede <strong>escribir la descripción</strong> del producto con sugerencias automáticas o <strong>escanear directamente el código de barras</strong> (con pistola USB, Bluetooth o cámara). El sistema identificará el material y sugerirá la celda óptima de guardado (Putaway).
                 </div>
               </div>
 
               {/* Input de Escaneo y Selector de Celda */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1.5 tracking-wider">
-                    Escaneo del Código de Barras (EAN-13 / SKU)
-                  </label>
-                  <div className="relative flex items-center">
-                    <Scan className="absolute left-3.5 h-4 w-4 text-blue-600" />
-                    <input
-                      type="text"
-                      value={scannedBarcode}
-                      onChange={(e) => setScannedBarcode(e.target.value)}
-                      placeholder="Escanee o ingrese código EAN-13 / SKU"
-                      className="w-full pl-10 pr-9 py-3 text-xs font-mono font-bold border border-slate-200 rounded-xl focus:border-blue-500 focus:outline-none bg-white shadow-2xs"
-                      required
-                      autoFocus
-                    />
-                    {scannedBarcode && (
-                      <button
-                        type="button"
-                        onClick={() => setScannedBarcode('')}
-                        className="absolute right-3 text-slate-400 hover:text-slate-600 p-1 rounded cursor-pointer"
-                        title="Limpiar código"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    )}
-                  </div>
+                  <ArticleSuggestionInput
+                    value={scannedBarcode}
+                    onChange={(val) => setScannedBarcode(val)}
+                    onSelectProduct={(prod) => {
+                      setScannedBarcode(prod.sku);
+                    }}
+                    inventory={inventory}
+                    bins={bins}
+                    themeColor="blue"
+                    label="Artículo: Escaneo de Código o Búsqueda por Descripción / SKU"
+                    placeholder="Escriba descripción (ej. Controlador, Cable...) o escanee EAN / SKU"
+                    required
+                    autoFocus
+                  />
                 </div>
 
                 <div>
@@ -988,36 +993,26 @@ export const BarcodeConsole: React.FC<BarcodeConsoleProps> = ({
               <div className="bg-amber-50/60 rounded-2xl p-3.5 border border-amber-150 text-[11px] text-amber-900 leading-relaxed flex items-start gap-2.5">
                 <Info className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
                 <div>
-                  <strong>Operación de Salidas de Almacén:</strong> Escanee el código de barras del producto para su salida. Si no tiene registro, la plataforma lo indicará claramente. Si está registrado, <strong>le mostrará en qué posición está físicamente y de qué celda se sugiere extraer</strong> para agilizar el picking.
+                  <strong>Operación de Salidas de Almacén:</strong> Puede <strong>escribir la descripción</strong> del material con sugerencias inteligentes o <strong>escanear su código de barras</strong> (pistola o cámara). La plataforma le mostrará las celdas de almacenamiento y stock disponible para agilizar el picking.
                 </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1.5 tracking-wider">
-                    Escaneo Código de Barras de Material para Salida de Almacén
-                  </label>
-                  <div className="relative flex items-center">
-                    <Scan className="absolute left-3.5 h-4 w-4 text-amber-600" />
-                    <input
-                      type="text"
-                      value={scannedBarcode}
-                      onChange={(e) => setScannedBarcode(e.target.value)}
-                      placeholder="Escanee código EAN-13 o SKU"
-                      className="w-full pl-10 pr-9 py-3 text-xs font-mono font-bold border border-slate-200 rounded-xl focus:border-amber-500 focus:outline-none bg-white shadow-2xs"
-                      required
-                      autoFocus
-                    />
-                    {scannedBarcode && (
-                      <button
-                        type="button"
-                        onClick={() => setScannedBarcode('')}
-                        className="absolute right-3 text-slate-400 hover:text-slate-600 p-1 rounded cursor-pointer"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    )}
-                  </div>
+                  <ArticleSuggestionInput
+                    value={scannedBarcode}
+                    onChange={(val) => setScannedBarcode(val)}
+                    onSelectProduct={(prod) => {
+                      setScannedBarcode(prod.sku);
+                    }}
+                    inventory={inventory}
+                    bins={bins}
+                    themeColor="amber"
+                    label="Artículo para Salida: Escaneo o Búsqueda por Descripción / SKU"
+                    placeholder="Escriba descripción (ej. Sensor, Batería...) o escanee EAN / SKU"
+                    required
+                    autoFocus
+                  />
                 </div>
 
                 <div>
@@ -1345,35 +1340,30 @@ export const BarcodeConsole: React.FC<BarcodeConsoleProps> = ({
               <div className="bg-emerald-50/60 rounded-2xl p-3.5 border border-emerald-150 text-[11px] text-emerald-900 leading-relaxed flex items-start gap-2.5">
                 <Info className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
                 <div>
-                  <strong>Auditoría de Conteo Cíclico:</strong> Escanee el código de barras o SKU del material para auditar existencias físicas. La consola comparará en vivo las cantidades y registrará cualquier desviación.
+                  <strong>Auditoría de Conteo Cíclico:</strong> Puede <strong>escribir la descripción</strong> del material para seleccionarlo de las sugerencias o <strong>escanear su código de barras</strong> (pistola USB, Bluetooth o cámara) para comparar de inmediato las existencias teóricas y registrar las piezas contadas.
                 </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1.5 tracking-wider">
-                    Código de Barras/SKU Escaneado
-                  </label>
-                  <div className="relative flex items-center">
-                    <Scan className="absolute left-3.5 h-4 w-4 text-emerald-600" />
-                    <input
-                      type="text"
-                      value={scannedBarcode}
-                      onChange={(e) => setScannedBarcode(e.target.value)}
-                      placeholder="Escanee EAN-13 o SKU de material"
-                      className="w-full pl-10 pr-9 py-3 text-xs font-mono font-bold border border-slate-200 rounded-xl focus:border-emerald-500 focus:outline-none bg-white shadow-2xs"
-                      required
-                    />
-                    {scannedBarcode && (
-                      <button
-                        type="button"
-                        onClick={() => setScannedBarcode('')}
-                        className="absolute right-3 text-slate-400 hover:text-slate-600 p-1 rounded cursor-pointer"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    )}
-                  </div>
+                  <ArticleSuggestionInput
+                    value={scannedBarcode}
+                    onChange={(val) => setScannedBarcode(val)}
+                    onSelectProduct={(prod) => {
+                      setScannedBarcode(prod.sku);
+                      // Auto-focus the physical count field
+                      setTimeout(() => {
+                        physicalCountInputRef.current?.focus();
+                        physicalCountInputRef.current?.select();
+                      }, 100);
+                    }}
+                    inventory={inventory}
+                    bins={bins}
+                    themeColor="emerald"
+                    label="Artículo para Conteo: Búsqueda por Descripción, Nombre o SKU"
+                    placeholder="Escriba descripción (ej. Controlador, Sensor...) o escanee EAN / SKU"
+                    required
+                  />
                 </div>
 
                 <div>
@@ -1381,6 +1371,7 @@ export const BarcodeConsole: React.FC<BarcodeConsoleProps> = ({
                     Cantidad Física Contada en Almacén
                   </label>
                   <input
+                    ref={physicalCountInputRef}
                     type="number"
                     min="0"
                     value={physicalCount}

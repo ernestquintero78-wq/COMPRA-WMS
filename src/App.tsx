@@ -21,6 +21,7 @@ import { Login } from './components/Login';
 import { CycleCountReportModal } from './components/CycleCountReportModal';
 import { PlatformSettings, DEFAULT_THEME_VALUES } from './components/PlatformSettings';
 import { ConfigurationHub } from './components/ConfigurationHub';
+import { ExternalWarehouseManager } from './components/ExternalWarehouseManager';
 import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts';
 import {
   Boxes,
@@ -1241,6 +1242,7 @@ export default function App() {
                     { id: 'salidas', label: 'Salidas', icon: ArrowUpRight },
                     { id: 'movimientos', label: 'Movimientos', icon: Move },
                     { id: 'conteos', label: 'Conteos Cíclicos', icon: ClipboardCheck },
+                    { id: 'almacen-externo', label: 'Almacén Externo', icon: Building2 },
                   ].map((tab) => {
                     const Icon = tab.icon;
                     const isActive = activeTab === tab.id;
@@ -1357,7 +1359,7 @@ export default function App() {
                 <span className="text-slate-300 font-light">|</span>
                 <span className="text-slate-500 font-medium">Sección activa:</span>
                 <span className="font-bold text-slate-800 capitalize font-mono">
-                  {activeTab === 'configuracion' || activeTab === 'crew' || activeTab === 'manual' ? 'Configuración' : activeTab}
+                  {activeTab === 'configuracion' || activeTab === 'crew' || activeTab === 'manual' ? 'Configuración' : activeTab === 'almacen-externo' ? 'Almacén Externo' : activeTab}
                 </span>
               </div>
               <span className="text-[10px] text-slate-400 hidden sm:inline font-mono">
@@ -2070,6 +2072,15 @@ export default function App() {
               logs={logs}
               onUpdateBins={handleUpdateBins}
               activeOperatorName={activeOperator ? `${activeOperator.name} (${activeOperator.role})` : 'Administrador de Logística'}
+            />
+          )}
+
+          {activeTab === 'almacen-externo' && (
+            <ExternalWarehouseManager
+              inventory={inventory}
+              bins={bins}
+              activeOperatorName={activeOperator ? `${activeOperator.name} (${activeOperator.role})` : (user?.name || user?.email || 'Administrador Logístico')}
+              platformTheme={platformTheme}
             />
           )}
 

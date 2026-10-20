@@ -145,3 +145,50 @@ export interface WarehouseSection {
   status: 'Activo' | 'Inactivo';
   createdAt: string;
 }
+
+export interface ExternalWarehouse {
+  id: string;
+  code: string;
+  name: string;
+  address: string;
+  city: string;
+  type: '3PL / Tercero' | 'Satélite' | 'Depósito Temporal' | 'Obra / Proyecto' | 'Tránsito';
+  manager: string;
+  phone: string;
+  email: string;
+  status: 'Activo' | 'Inactivo';
+  notes?: string;
+  createdAt: string;
+}
+
+export interface ExternalInventoryItem {
+  id: string;
+  warehouseId: string;
+  sku: string;
+  name: string;
+  description: string;
+  category: string;
+  qty: number;
+  minQty: number;
+  unitWeight?: number;
+  cost?: number;
+  locationInWarehouse?: string;
+  barcode?: string;
+  updatedAt: string;
+}
+
+export interface ExternalTransaction {
+  id: string;
+  warehouseId: string;
+  type: 'Entrada' | 'Salida';
+  sku: string;
+  productName: string;
+  qty: number;
+  sourceOrDestination: string;
+  carrierOrDelivery?: string;
+  referenceDoc?: string;
+  notes?: string;
+  operator: string;
+  timestamp: string;
+}
+
