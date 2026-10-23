@@ -49,6 +49,13 @@ interface ExternalWarehouseManagerProps {
   bins: Bin[];
   activeOperatorName: string;
   platformTheme: PlatformTheme;
+  onCentralExternalTransfer?: (transferData: {
+    type: 'to_external' | 'from_external';
+    sku: string;
+    qty: number;
+    warehouseName: string;
+    referenceDoc?: string;
+  }) => Promise<void>;
 }
 
 const INITIAL_EXTERNAL_WAREHOUSES: ExternalWarehouse[] = [
@@ -247,7 +254,8 @@ export const ExternalWarehouseManager: React.FC<ExternalWarehouseManagerProps> =
   inventory,
   bins,
   activeOperatorName,
-  platformTheme
+  platformTheme,
+  onCentralExternalTransfer
 }) => {
   // Navigation tabs
   const [activeTab, setActiveTab] = useState<'almacenes' | 'inventario' | 'entradas' | 'salidas' | 'movimientos' | 'reportes'>('inventario');
@@ -605,9 +613,20 @@ export const ExternalWarehouseManager: React.FC<ExternalWarehouseManagerProps> =
     };
     setTransactions(prev => [newTx, ...prev]);
 
+    // Cross-module sync: if coming from Central, deduct from Central inventory and bins
+    if (inboundSource.toLowerCase().includes('central') && onCentralExternalTransfer) {
+      onCentralExternalTransfer({
+        type: 'to_external',
+        sku: inboundSelectedProduct.sku,
+        qty: inboundQty,
+        warehouseName: wh?.name || 'Almacén Externo',
+        referenceDoc: folio
+      });
+    }
+
     setInboundFeedback({
       type: 'ok',
-      text: `✓ Entrada registrada exitosamente (Folio: ${folio}). Se agregaron ${inboundQty} unidades de ${inboundSelectedProduct.name} al almacén "${wh?.name}".`
+      text: `✓ Entrada registrada exitosamente (Folio: ${folio}). Se agregaron ${inboundQty} unidades de ${inboundSelectedProduct.name} al almacén "${wh?.name}". ${inboundSource.toLowerCase().includes('central') ? 'Inventario y celdas del Almacén Central actualizados.' : ''}`
     });
 
     // Reset input fields
@@ -675,9 +694,20 @@ export const ExternalWarehouseManager: React.FC<ExternalWarehouseManagerProps> =
     };
     setTransactions(prev => [newTx, ...prev]);
 
+    // Cross-module sync: if transferring to Central, add to Central inventory and bins
+    if (outboundDestination.toLowerCase().includes('central') && onCentralExternalTransfer) {
+      onCentralExternalTransfer({
+        type: 'from_external',
+        sku: outboundSelectedProduct.sku,
+        qty: outboundQty,
+        warehouseName: wh?.name || 'Almacén Externo',
+        referenceDoc: folio
+      });
+    }
+
     setOutboundFeedback({
       type: 'ok',
-      text: `✓ Salida registrada exitosamente (Folio: ${folio}). Se egresaron ${outboundQty} unidades de ${outboundSelectedProduct.name} del almacén "${wh?.name}".`
+      text: `✓ Salida registrada exitosamente (Folio: ${folio}). Se egresaron ${outboundQty} unidades de ${outboundSelectedProduct.name} del almacén "${wh?.name}". ${outboundDestination.toLowerCase().includes('central') ? 'Inventario y celdas del Almacén Central incrementados.' : ''}`
     });
 
     // Reset

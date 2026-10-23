@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { InventoryItem, Bin, Order } from '../types';
 import { 
@@ -19,6 +19,7 @@ import {
   Plus, 
   Minus, 
   RotateCcw, 
+  RotateCw,
   X, 
   Layers, 
   Check, 
@@ -26,9 +27,28 @@ import {
   Navigation, 
   Compass, 
   Sparkles,
-  ClipboardList
+  ClipboardList,
+  Wrench,
+  UserCheck,
+  UserPlus,
+  User,
+  Calendar,
+  Briefcase,
+  HardHat,
+  Tag,
+  BookOpen,
+  ArrowRight,
+  ChevronDown
 } from 'lucide-react';
 import { ArticleSuggestionInput } from './ArticleSuggestionInput';
+
+export interface BorrowerEntry {
+  id: string;
+  name: string;
+  role: string;
+  department?: string;
+  source: 'crew' | 'database' | 'manual';
+}
 
 export interface DirectDispatchRecord {
   id: string;
@@ -39,6 +59,14 @@ export interface DirectDispatchRecord {
   qty: number;
   originBins: string[];
   destination: string;
+  dispatchType?: 'loan' | 'definitive' | 'other';
+  dispatchTypeLabel?: string;
+  borrowerName?: string;
+  borrowerDepartment?: string;
+  expectedReturnDate?: string;
+  loanStatus?: 'active' | 'returned';
+  returnTimestamp?: string;
+  returnOperator?: string;
   deliveryMethod: string;
   trackingNumber?: string;
   notes?: string;
@@ -57,11 +85,80 @@ interface DirectDispatchManagerProps {
     deliveryMethod: string;
     trackingNumber?: string;
     notes?: string;
+    dispatchType?: 'loan' | 'definitive' | 'other';
+    dispatchTypeLabel?: string;
+    borrowerName?: string;
+    expectedReturnDate?: string;
   }) => Promise<{ orderId: string; deductedBins: string[] } | null>;
   onCompleteOrder?: (orderId: string) => Promise<void>;
+  onReturnLoan?: (recordId: string, sku: string, qty: number, targetBinId?: string, returnOperator?: string) => Promise<boolean>;
   activeOperator?: any;
   platformTheme?: any;
   onNavigateToTab?: (tab: string) => void;
+}
+
+const INITIAL_BORROWERS_DATABASE: BorrowerEntry[] = [
+  { id: 'BOR-01', name: 'Carlos Martínez Méndez', role: 'Técnico de Mantenimiento', department: 'Mantenimiento Industrial', source: 'database' },
+  { id: 'BOR-02', name: 'Daniel Ochoa Rivera', role: 'Supervisor de Obra', department: 'Construcción y Patios', source: 'database' },
+  { id: 'BOR-03', name: 'Alejandro Ruiz Solís', role: 'Mecánico de Flota', department: 'Taller Central', source: 'database' },
+  { id: 'BOR-04', name: 'Javier Gómez Peña', role: 'Instalador Eléctrico', department: 'Contratista Externo', source: 'database' },
+  { id: 'BOR-05', name: 'Miguel Ángel Torres', role: 'Técnico Electromecánico', department: 'Línea de Producción', source: 'database' },
+  { id: 'BOR-06', name: 'Eduardo Valdés Ramos', role: 'Soldador Especialista', department: 'Estructuras y Patios', source: 'database' }
+];
+
+function loadBorrowersFromSources(): BorrowerEntry[] {
+  const combined: BorrowerEntry[] = [];
+
+  // 1. Crew members from WMS
+  try {
+    const savedCrew = localStorage.getItem('OWMS_CREW_MEMBERS');
+    if (savedCrew) {
+      const crew = JSON.parse(savedCrew);
+      if (Array.isArray(crew)) {
+        crew.forEach((c: any) => {
+          if (c.name && c.name.trim()) {
+            combined.push({
+              id: c.id || `CREW-${combined.length + 1}`,
+              name: c.name.trim(),
+              role: c.role || 'Operario de Almacén',
+              department: c.department || 'Operaciones WMS',
+              source: 'crew'
+            });
+          }
+        });
+      }
+    }
+  } catch (e) {}
+
+  // 2. Custom borrowers database
+  try {
+    const savedDb = localStorage.getItem('OWMS_BORROWERS_DATABASE');
+    if (savedDb) {
+      const custom = JSON.parse(savedDb);
+      if (Array.isArray(custom)) {
+        custom.forEach((b: any) => {
+          if (b.name && b.name.trim() && !combined.some(existing => existing.name.toLowerCase() === b.name.trim().toLowerCase())) {
+            combined.push({
+              id: b.id || `BOR-${combined.length + 1}`,
+              name: b.name.trim(),
+              role: b.role || 'Técnico / Colaborador',
+              department: b.department || 'Planta',
+              source: 'database'
+            });
+          }
+        });
+      }
+    } else {
+      INITIAL_BORROWERS_DATABASE.forEach(b => {
+        if (!combined.some(existing => existing.name.toLowerCase() === b.name.toLowerCase())) {
+          combined.push(b);
+        }
+      });
+      localStorage.setItem('OWMS_BORROWERS_DATABASE', JSON.stringify(INITIAL_BORROWERS_DATABASE));
+    }
+  } catch (e) {}
+
+  return combined;
 }
 
 export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
@@ -70,6 +167,7 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
   orders,
   onDirectDispatch,
   onCompleteOrder,
+  onReturnLoan,
   activeOperator,
   platformTheme,
   onNavigateToTab
@@ -86,6 +184,135 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
   const [customDeliveryMethodText, setCustomDeliveryMethodText] = useState<string>('');
   const [trackingNumber, setTrackingNumber] = useState<string>('');
   const [notes, setNotes] = useState<string>('');
+
+  // Dispatch Modality: 'loan' (Préstamo de herramienta), 'definitive' (Salida definitiva), 'other' (Otra modalidad)
+  const [dispatchType, setDispatchType] = useState<'loan' | 'definitive' | 'other'>('definitive');
+  const [customDispatchTypeText, setCustomDispatchTypeText] = useState<string>('');
+
+  // Borrower states (for loans)
+  const [borrowerSelectionMode, setBorrowerSelectionMode] = useState<'database' | 'manual'>('database');
+  const [borrowerName, setBorrowerName] = useState<string>('');
+  const [borrowerDepartment, setBorrowerDepartment] = useState<string>('');
+  const [expectedReturnDate, setExpectedReturnDate] = useState<string>('');
+  const [borrowerFilterText, setBorrowerFilterText] = useState<string>('');
+  const [newBorrowerFeedback, setNewBorrowerFeedback] = useState<string>('');
+  const [borrowersDb, setBorrowersDb] = useState<BorrowerEntry[]>(() => loadBorrowersFromSources());
+  const [isBorrowerSuggestionsOpen, setIsBorrowerSuggestionsOpen] = useState<boolean>(false);
+  const borrowerInputContainerRef = useRef<HTMLDivElement>(null);
+
+  // Close borrower suggestions popover when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (borrowerInputContainerRef.current && !borrowerInputContainerRef.current.contains(e.target as Node)) {
+        setIsBorrowerSuggestionsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Filtered suggestions for autocomplete
+  const suggestedBorrowers = useMemo(() => {
+    const query = borrowerName.trim().toLowerCase();
+    if (!query) {
+      // Top 8 common technicians when empty
+      return borrowersDb.slice(0, 8);
+    }
+    return borrowersDb.filter(b => 
+      b.name.toLowerCase().includes(query) || 
+      b.role.toLowerCase().includes(query) || 
+      (b.department || '').toLowerCase().includes(query)
+    );
+  }, [borrowerName, borrowersDb]);
+
+  // Check if current typed name exactly matches someone in DB
+  const matchedBorrowerInDb = useMemo(() => {
+    const query = borrowerName.trim().toLowerCase();
+    if (!query) return null;
+    return borrowersDb.find(b => b.name.toLowerCase() === query) || null;
+  }, [borrowerName, borrowersDb]);
+
+  // Handle selecting a borrower from suggestions or chips
+  const handleSelectBorrowerSuggestion = (entry: BorrowerEntry) => {
+    setBorrowerName(entry.name);
+    setBorrowerDepartment(entry.department || entry.role || '');
+    setIsBorrowerSuggestionsOpen(false);
+    if (!destination.trim() || destination.startsWith('Taller / Resguardo')) {
+      setDestination(`Taller / Resguardo (${entry.name})`);
+    }
+  };
+
+  // Listen to storage changes
+  useEffect(() => {
+    const handleSyncBorrowers = () => {
+      setBorrowersDb(loadBorrowersFromSources());
+    };
+    window.addEventListener('storage', handleSyncBorrowers);
+    window.addEventListener('owms_borrowers_updated', handleSyncBorrowers);
+    return () => {
+      window.removeEventListener('storage', handleSyncBorrowers);
+      window.removeEventListener('owms_borrowers_updated', handleSyncBorrowers);
+    };
+  }, []);
+
+  const handleSaveNewBorrowerToDb = (nameToSave: string, deptToSave?: string) => {
+    const cleanName = nameToSave.trim();
+    if (!cleanName) return;
+    const exists = borrowersDb.some(b => b.name.toLowerCase() === cleanName.toLowerCase());
+    if (exists) {
+      setNewBorrowerFeedback('Este técnico ya existe en la base de datos.');
+      setTimeout(() => setNewBorrowerFeedback(''), 3000);
+      return;
+    }
+    const newEntry: BorrowerEntry = {
+      id: `BOR-${Date.now().toString().slice(-4)}`,
+      name: cleanName,
+      role: 'Técnico / Prestatario Registrado',
+      department: deptToSave?.trim() || 'Taller / Obra',
+      source: 'database'
+    };
+    const updated = [newEntry, ...borrowersDb];
+    setBorrowersDb(updated);
+    try {
+      const customOnly = updated.filter(b => b.source === 'database');
+      localStorage.setItem('OWMS_BORROWERS_DATABASE', JSON.stringify(customOnly));
+      window.dispatchEvent(new CustomEvent('owms_borrowers_updated'));
+    } catch (e) {}
+    setNewBorrowerFeedback(`¡"${cleanName}" guardado en la base de datos de prestatarios!`);
+    setTimeout(() => setNewBorrowerFeedback(''), 3500);
+  };
+
+  const handleReturnLoan = async (recordId: string) => {
+    const rec = dispatchHistory.find(d => d.id === recordId);
+    if (onReturnLoan && rec) {
+      await onReturnLoan(rec.id, rec.sku, rec.qty || 1, rec.originBins?.[0], activeOperator?.name);
+    }
+    const updated = dispatchHistory.map(r => {
+      if (r.id === recordId) {
+        return {
+          ...r,
+          loanStatus: 'returned' as const,
+          returnTimestamp: new Date().toISOString(),
+          returnOperator: activeOperator ? activeOperator.name : 'Operador WMS'
+        };
+      }
+      return r;
+    });
+    setDispatchHistory(updated);
+    try {
+      localStorage.setItem('OWMS_DIRECT_DISPATCH_HISTORY', JSON.stringify(updated));
+      window.dispatchEvent(new Event('storage'));
+      window.dispatchEvent(new CustomEvent('owms_dispatch_updated'));
+      window.dispatchEvent(new CustomEvent('wms_direct_dispatches_updated'));
+      window.dispatchEvent(new CustomEvent('wms_inventory_updated'));
+      window.dispatchEvent(new CustomEvent('owms_borrowers_updated'));
+    } catch (e) {}
+
+    setFeedback({
+      type: 'ok',
+      text: `¡Herramienta registrada como DEVUELTA con éxito! Folio: ${recordId}. Existencias reintegradas al catálogo y celdas.`
+    });
+  };
 
   // Search & Catalog modal state
   const [isCatalogOpen, setIsCatalogOpen] = useState(false);
@@ -107,11 +334,14 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
     return [];
   });
 
-  // Save history to localStorage
+  // Save history to localStorage and broadcast cross-module sync
   useEffect(() => {
     try {
       localStorage.setItem('OWMS_DIRECT_DISPATCH_HISTORY', JSON.stringify(dispatchHistory));
-      window.dispatchEvent(new Event('wms_direct_dispatches_updated'));
+      window.dispatchEvent(new CustomEvent('wms_direct_dispatches_updated'));
+      window.dispatchEvent(new CustomEvent('owms_dispatch_updated'));
+      window.dispatchEvent(new CustomEvent('owms_borrowers_updated'));
+      window.dispatchEvent(new Event('storage'));
     } catch (e) {}
   }, [dispatchHistory]);
 
@@ -297,8 +527,28 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
       return;
     }
 
-    if (!destination.trim()) {
-      setFeedback({ type: 'err', text: 'Indique el destino, cliente o sucursal de entrega.' });
+    // Validaciones específicas de modalidad
+    if (dispatchType === 'loan' && !borrowerName.trim()) {
+      setFeedback({ 
+        type: 'err', 
+        text: 'Para registrar un préstamo de herramienta, debe indicar o seleccionar a quién se le presta el material.' 
+      });
+      return;
+    }
+
+    if (dispatchType === 'other' && !customDispatchTypeText.trim()) {
+      setFeedback({ 
+        type: 'err', 
+        text: 'Por favor, especifique de qué modalidad se trata la salida.' 
+      });
+      return;
+    }
+
+    const effectiveDestination = destination.trim() 
+      || (dispatchType === 'loan' ? (borrowerDepartment ? `Área: ${borrowerDepartment}` : `Taller / Resguardo (${borrowerName.trim()})`) : '');
+
+    if (!effectiveDestination) {
+      setFeedback({ type: 'err', text: 'Indique el destino, cliente, área o sucursal de entrega.' });
       return;
     }
 
@@ -315,13 +565,23 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
         ? (customDeliveryMethodText.trim() ? `Otro: ${customDeliveryMethodText.trim()}` : 'Otro (Personalizado)')
         : deliveryMethod;
 
+      const dispatchTypeLabel = dispatchType === 'loan'
+        ? 'Préstamo de Herramienta'
+        : dispatchType === 'other'
+        ? (customDispatchTypeText.trim() || 'Otra Modalidad')
+        : 'Salida Definitiva';
+
       const result = await onDirectDispatch({
         sku: selectedProduct.sku,
         qty: quantity,
-        destination: destination.trim(),
+        destination: effectiveDestination,
         deliveryMethod: effectiveDeliveryMethod,
         trackingNumber: trackingNumber.trim() || undefined,
-        notes: notes.trim() || undefined
+        notes: notes.trim() || undefined,
+        dispatchType,
+        dispatchTypeLabel,
+        borrowerName: dispatchType === 'loan' ? borrowerName.trim() : undefined,
+        expectedReturnDate: dispatchType === 'loan' && expectedReturnDate ? expectedReturnDate : undefined
       });
 
       if (result) {
@@ -338,13 +598,27 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
           category: selectedProduct.category || 'Almacenamiento General',
           qty: quantity,
           originBins: usedBins,
-          destination: destination.trim(),
+          destination: effectiveDestination,
+          dispatchType,
+          dispatchTypeLabel,
+          borrowerName: dispatchType === 'loan' ? borrowerName.trim() : undefined,
+          borrowerDepartment: dispatchType === 'loan' && borrowerDepartment.trim() ? borrowerDepartment.trim() : undefined,
+          expectedReturnDate: dispatchType === 'loan' && expectedReturnDate ? expectedReturnDate : undefined,
+          loanStatus: dispatchType === 'loan' ? 'active' : undefined,
           deliveryMethod: effectiveDeliveryMethod,
           trackingNumber: trackingNumber.trim() || undefined,
           notes: notes.trim() || undefined,
           operator: activeOperator ? activeOperator.name : 'Administrador de Logística',
           totalEstimatedWeightKg: (selectedProduct.unitWeight || 1) * quantity
         };
+
+        // If it was a loan and borrower was typed, ensure saved in database
+        if (dispatchType === 'loan' && borrowerName.trim()) {
+          const exists = borrowersDb.some(b => b.name.toLowerCase() === borrowerName.trim().toLowerCase());
+          if (!exists) {
+            handleSaveNewBorrowerToDb(borrowerName.trim(), borrowerDepartment.trim());
+          }
+        }
 
         // Update local history
         setDispatchHistory(prev => [newRecord, ...prev]);
@@ -359,10 +633,14 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
         setTrackingNumber('');
         setNotes('');
         setBarcodeInput('');
+        setBorrowerName('');
+        setBorrowerDepartment('');
+        setExpectedReturnDate('');
+        setCustomDispatchTypeText('');
 
         setFeedback({
           type: 'ok',
-          text: `¡Salida de almacén registrada con éxito! Folio generado: ${newRecord.id}`
+          text: `¡${dispatchType === 'loan' ? 'Préstamo de herramienta' : 'Salida de almacén'} registrado con éxito! Folio generado: ${newRecord.id}`
         });
       }
     } catch (err: any) {
@@ -382,6 +660,11 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
     const headers = [
       'Folio de Salida',
       'Fecha y Hora',
+      'Modalidad de Salida',
+      'Prestatario / Responsable',
+      'Departamento / Área',
+      'Fecha Estimada Devolución',
+      'Estado del Préstamo',
       'SKU',
       'Producto',
       'Categoría',
@@ -397,6 +680,11 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
     const rows = dispatchHistory.map(d => [
       d.id,
       new Date(d.timestamp).toLocaleString(),
+      d.dispatchType === 'loan' ? 'Préstamo de Herramienta' : d.dispatchType === 'other' ? (d.dispatchTypeLabel || 'Otra Modalidad') : 'Salida Definitiva',
+      d.borrowerName || 'N/A',
+      d.borrowerDepartment || 'N/A',
+      d.expectedReturnDate || 'N/A',
+      d.dispatchType === 'loan' ? (d.loanStatus === 'returned' ? 'Devuelto / Reintegrado' : 'En Préstamo (Activo)') : 'N/A',
       d.sku,
       d.productName,
       d.category,
@@ -818,115 +1106,593 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
               </div>
             </div>
 
-            {/* PASO 3: MEDIO DE ENTREGA */}
-            <div className="bg-white p-5 sm:p-6 rounded-3xl border border-slate-200/90 shadow-xs space-y-4">
+            {/* PASO 3: MEDIO DE ENTREGA & MODALIDAD DE SALIDA */}
+            <div className="bg-white p-5 sm:p-6 rounded-3xl border border-slate-200/90 shadow-xs space-y-6">
               <div className="flex items-center gap-2.5 pb-3 border-b border-slate-150">
                 <div className="h-8 w-8 rounded-xl bg-indigo-600 text-white font-mono font-black text-sm flex items-center justify-center shadow-xs">
                   3
                 </div>
                 <div>
                   <h3 className="text-sm sm:text-base font-black text-slate-900 tracking-tight">
-                    Medio de Entrega
+                    Medio de Entrega & Modalidad de Salida
                   </h3>
                   <p className="text-xs text-slate-400 font-medium">
-                    Seleccione el método de transporte y detalles de traslado
+                    Defina si es un préstamo de herramienta, salida definitiva u otra, y configure el medio de entrega
                   </p>
                 </div>
               </div>
 
-              {/* Selector de Métodos de Transporte */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
-                {deliveryOptions.map(opt => {
-                  const Icon = opt.icon;
-                  const isSelected = deliveryMethod === opt.id;
-                  return (
-                    <div
-                      key={opt.id}
-                      onClick={() => setDeliveryMethod(opt.id)}
-                      className={`p-3.5 rounded-2xl border transition cursor-pointer flex flex-col justify-between gap-2 ${
-                        isSelected
-                          ? 'bg-indigo-50/70 border-indigo-400 text-indigo-950 shadow-2xs ring-1 ring-indigo-400'
-                          : 'bg-slate-50/50 hover:bg-slate-50 border-slate-200 text-slate-700'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className={`h-8 w-8 rounded-xl flex items-center justify-center ${
-                          isSelected ? 'bg-indigo-600 text-white' : 'bg-white text-slate-500 border border-slate-200'
-                        }`}>
-                          <Icon className="h-4 w-4" />
-                        </div>
-                        <span className={`text-[9px] font-mono font-bold px-2 py-0.5 rounded-full ${
-                          isSelected ? 'bg-indigo-200/80 text-indigo-900' : 'bg-slate-100 text-slate-500'
-                        }`}>
-                          {opt.badge}
-                        </span>
-                      </div>
+              {/* SECCIÓN A: MODALIDAD DE LA SALIDA (PRÉSTAMO / DEFINITIVA / OTRA) */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-black uppercase font-mono tracking-wider text-slate-800 flex items-center gap-1.5">
+                    <Tag className="h-4 w-4 text-indigo-600" />
+                    <span>¿De qué tipo de salida se trata?</span>
+                  </label>
+                  <span className="text-[10px] text-slate-400 font-medium">
+                    Selección obligatoria
+                  </span>
+                </div>
 
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
+                  {/* Tarjeta 1: Préstamo de Herramienta */}
+                  <div
+                    onClick={() => {
+                      setDispatchType('loan');
+                      if (!destination.trim() && borrowerName.trim()) {
+                        setDestination(`Taller / Resguardo (${borrowerName.trim()})`);
+                      }
+                    }}
+                    className={`p-3.5 rounded-2xl border-2 transition-all cursor-pointer flex flex-col justify-between gap-2.5 ${
+                      dispatchType === 'loan'
+                        ? 'bg-blue-50/80 border-blue-500 text-blue-950 shadow-xs ring-1 ring-blue-400'
+                        : 'bg-slate-50/60 hover:bg-slate-50 border-slate-200 text-slate-700'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className={`h-8 w-8 rounded-xl flex items-center justify-center ${
+                        dispatchType === 'loan' ? 'bg-blue-600 text-white' : 'bg-white text-blue-600 border border-slate-200'
+                      }`}>
+                        <Wrench className="h-4 w-4" />
+                      </div>
+                      <span className={`text-[9px] font-mono font-extrabold px-2 py-0.5 rounded-full ${
+                        dispatchType === 'loan' ? 'bg-blue-200 text-blue-900' : 'bg-slate-200/80 text-slate-600'
+                      }`}>
+                        Temporal / Resguardo
+                      </span>
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-black leading-tight">
+                        Préstamo de Herramienta / Material
+                      </h4>
+                      <p className="text-[10px] text-slate-500 leading-snug mt-1">
+                        Sujeto a devolución obligatoria. Permite asignar el técnico o colaborador responsable.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Tarjeta 2: Salida Definitiva */}
+                  <div
+                    onClick={() => setDispatchType('definitive')}
+                    className={`p-3.5 rounded-2xl border-2 transition-all cursor-pointer flex flex-col justify-between gap-2.5 ${
+                      dispatchType === 'definitive'
+                        ? 'bg-emerald-50/80 border-emerald-500 text-emerald-950 shadow-xs ring-1 ring-emerald-400'
+                        : 'bg-slate-50/60 hover:bg-slate-50 border-slate-200 text-slate-700'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className={`h-8 w-8 rounded-xl flex items-center justify-center ${
+                        dispatchType === 'definitive' ? 'bg-emerald-600 text-white' : 'bg-white text-emerald-600 border border-slate-200'
+                      }`}>
+                        <ArrowUpRight className="h-4 w-4" />
+                      </div>
+                      <span className={`text-[9px] font-mono font-extrabold px-2 py-0.5 rounded-full ${
+                        dispatchType === 'definitive' ? 'bg-emerald-200 text-emerald-900' : 'bg-slate-200/80 text-slate-600'
+                      }`}>
+                        Consumo / Entrega Final
+                      </span>
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-black leading-tight">
+                        Salida Definitiva
+                      </h4>
+                      <p className="text-[10px] text-slate-500 leading-snug mt-1">
+                        Despacho a cliente, consumo directo en obra o merma sin retorno de material.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Tarjeta 3: Otra Modalidad */}
+                  <div
+                    onClick={() => setDispatchType('other')}
+                    className={`p-3.5 rounded-2xl border-2 transition-all cursor-pointer flex flex-col justify-between gap-2.5 ${
+                      dispatchType === 'other'
+                        ? 'bg-purple-50/80 border-purple-500 text-purple-950 shadow-xs ring-1 ring-purple-400'
+                        : 'bg-slate-50/60 hover:bg-slate-50 border-slate-200 text-slate-700'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className={`h-8 w-8 rounded-xl flex items-center justify-center ${
+                        dispatchType === 'other' ? 'bg-purple-600 text-white' : 'bg-white text-purple-600 border border-slate-200'
+                      }`}>
+                        <Sparkles className="h-4 w-4" />
+                      </div>
+                      <span className={`text-[9px] font-mono font-extrabold px-2 py-0.5 rounded-full ${
+                        dispatchType === 'other' ? 'bg-purple-200 text-purple-900' : 'bg-slate-200/80 text-slate-600'
+                      }`}>
+                        Personalizada
+                      </span>
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-black leading-tight">
+                        Otra Modalidad
+                      </h4>
+                      <p className="text-[10px] text-slate-500 leading-snug mt-1">
+                        El operario especifica el motivo o naturaleza del movimiento de salida.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* PANEL CONDICIONAL: SI SE TRATA DE UN PRÉSTAMO */}
+              {dispatchType === 'loan' && (
+                <div className="p-4 sm:p-5 bg-gradient-to-br from-blue-50/90 to-indigo-50/60 border-2 border-blue-300 rounded-3xl space-y-4 shadow-3xs animate-fadeIn">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-blue-200/70">
+                    <div className="flex items-center gap-2">
+                      <div className="h-7 w-7 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0">
+                        <UserCheck className="h-4 w-4" />
+                      </div>
                       <div>
-                        <h5 className="text-xs font-bold leading-tight">
-                          {opt.label}
-                        </h5>
-                        <p className="text-[10px] text-slate-400 leading-snug mt-0.5">
-                          {opt.desc}
+                        <h4 className="text-xs sm:text-sm font-black text-blue-950">
+                          Prestatario / Responsable de la Herramienta
+                        </h4>
+                        <p className="text-[10px] text-blue-700">
+                          Escriba el nombre directamente o elija de las sugerencias automáticas
                         </p>
                       </div>
                     </div>
-                  );
-                })}
-              </div>
 
-              {/* Input interactivo si se selecciona 'Otro Medio de Entrega' */}
-              {deliveryMethod === '__OTHER__' && (
-                <div className="p-3 bg-indigo-50/90 border-2 border-indigo-300 rounded-2xl space-y-1.5 animate-fadeIn">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-mono font-black uppercase text-indigo-900 tracking-wider">
-                      ✏️ ¿De qué se trata el medio de entrega? (especifique):
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setDeliveryMethod('Reparto Local (Unidad Propia)')}
-                      className="text-[10px] text-slate-400 hover:text-slate-600 font-bold cursor-pointer"
-                    >
-                      ✕ Cancelar
-                    </button>
+                    <div className="flex items-center gap-1.5 self-start sm:self-auto">
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold font-mono bg-blue-100 text-blue-800 border border-blue-200">
+                        <BookOpen className="h-3 w-3 text-blue-600" />
+                        <span>Base de datos: {borrowersDb.length} técnicos</span>
+                      </span>
+                    </div>
                   </div>
-                  <input
-                    type="text"
-                    value={customDeliveryMethodText}
-                    onChange={(e) => setCustomDeliveryMethodText(e.target.value)}
-                    placeholder="Ej. Transporte de personal, Flete tercerizado, Taxi de carga..."
-                    className="w-full px-3.5 py-2 bg-white border border-indigo-300 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    required
-                  />
+
+                  {/* CAMPO DE AUTOCOMPLETADO Y SUGERENCIAS INTELIGENTES */}
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      {/* Campo Principal: Escribir nombre con Autocompletado */}
+                      <div className="sm:col-span-2 relative" ref={borrowerInputContainerRef}>
+                        <label className="text-[11px] font-bold text-blue-950 block mb-1">
+                          Nombre del Colaborador / Técnico (Escriba o elija sugerencia):
+                        </label>
+                        <div className="relative">
+                          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                            <Search className="h-4 w-4 text-blue-500" />
+                          </div>
+                          <input
+                            type="text"
+                            value={borrowerName}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setBorrowerName(val);
+                              setIsBorrowerSuggestionsOpen(true);
+                              if (!destination.trim() || destination.startsWith('Taller / Resguardo')) {
+                                setDestination(val.trim() ? `Taller / Resguardo (${val.trim()})` : '');
+                              }
+                            }}
+                            onFocus={() => setIsBorrowerSuggestionsOpen(true)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Escape') {
+                                setIsBorrowerSuggestionsOpen(false);
+                              }
+                            }}
+                            placeholder="Escriba el nombre del técnico (ej. Carlos, Juan, Roberto...)"
+                            className="w-full pl-9 pr-16 py-2.5 bg-white border-2 border-blue-300 rounded-xl text-xs sm:text-sm font-bold text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-600 shadow-3xs"
+                            autoComplete="off"
+                          />
+                          <div className="absolute inset-y-0 right-0 pr-1.5 flex items-center gap-1">
+                            {borrowerName && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setBorrowerName('');
+                                  setBorrowerDepartment('');
+                                  if (destination.startsWith('Taller / Resguardo')) {
+                                    setDestination('');
+                                  }
+                                }}
+                                className="p-1 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 cursor-pointer"
+                                title="Borrar nombre"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => setIsBorrowerSuggestionsOpen(!isBorrowerSuggestionsOpen)}
+                              className="p-1 text-blue-600 hover:text-blue-800 rounded-lg hover:bg-blue-100 cursor-pointer"
+                              title="Ver sugerencias de técnicos"
+                            >
+                              <ChevronDown className={`h-4 w-4 transition-transform duration-200 ${isBorrowerSuggestionsOpen ? 'rotate-180' : ''}`} />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* DESPLEGABLE FLOTANTE DE SUGERENCIAS */}
+                        {isBorrowerSuggestionsOpen && (
+                          <div className="absolute z-30 left-0 right-0 mt-1.5 bg-white border-2 border-blue-400 rounded-2xl shadow-xl overflow-hidden animate-fadeIn">
+                            <div className="p-2 bg-blue-50/80 border-b border-blue-100 flex items-center justify-between text-[10px] font-bold font-mono text-blue-800">
+                              <span>Sugerencias de la Base de Datos ({suggestedBorrowers.length})</span>
+                              <span className="text-slate-500 font-normal">Haga clic para autocompletar</span>
+                            </div>
+
+                            <div className="max-h-56 overflow-y-auto divide-y divide-slate-100">
+                              {suggestedBorrowers.length > 0 ? (
+                                suggestedBorrowers.map((b) => {
+                                  const isExact = borrowerName.trim().toLowerCase() === b.name.toLowerCase();
+                                  return (
+                                    <button
+                                      key={b.id}
+                                      type="button"
+                                      onClick={() => handleSelectBorrowerSuggestion(b)}
+                                      className={`w-full text-left p-2.5 flex items-center justify-between gap-2 transition cursor-pointer ${
+                                        isExact ? 'bg-blue-100/70' : 'hover:bg-blue-50/70'
+                                      }`}
+                                    >
+                                      <div className="flex items-center gap-2.5 min-w-0">
+                                        <div className="h-7 w-7 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center shrink-0 font-bold text-xs font-mono">
+                                          {b.name.charAt(0).toUpperCase()}
+                                        </div>
+                                        <div className="min-w-0">
+                                          <div className="text-xs font-bold text-slate-900 truncate">
+                                            {b.name}
+                                          </div>
+                                          <div className="text-[10px] text-slate-500 truncate flex items-center gap-1.5">
+                                            <span className="font-medium text-blue-700">{b.role}</span>
+                                            {b.department && (
+                                              <>
+                                                <span>•</span>
+                                                <span>{b.department}</span>
+                                              </>
+                                            )}
+                                          </div>
+                                        </div>
+                                      </div>
+                                      <div className="shrink-0 flex items-center gap-1 text-[10px] font-bold text-blue-600 bg-white px-2 py-1 rounded-lg border border-blue-200">
+                                        <Check className="h-3 w-3" />
+                                        <span>Elegir</span>
+                                      </div>
+                                    </button>
+                                  );
+                                })
+                              ) : (
+                                <div className="p-3 text-center text-xs text-slate-500">
+                                  No se encontró ningún técnico registrado con ese nombre.
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Opción rápida para guardar el nombre escrito si es nuevo */}
+                            {borrowerName.trim().length >= 2 && !matchedBorrowerInDb && (
+                              <div className="p-2 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-2">
+                                <span className="text-[10px] text-slate-600 truncate">
+                                  ¿Técnico no registrado?
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleSaveNewBorrowerToDb(borrowerName, borrowerDepartment)}
+                                  className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[10px] font-bold font-mono flex items-center gap-1 cursor-pointer shadow-3xs"
+                                >
+                                  <UserPlus className="h-3 w-3" />
+                                  <span>+ Guardar "{borrowerName.trim()}" en BD</span>
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Campo Secundario: Departamento / Área / Puesto */}
+                      <div>
+                        <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                          Departamento / Puesto (Opcional):
+                        </label>
+                        <input
+                          type="text"
+                          value={borrowerDepartment}
+                          onChange={(e) => setBorrowerDepartment(e.target.value)}
+                          placeholder="Ej. Taller Mecánico, Obra..."
+                          className="w-full px-3 py-2.5 bg-white border border-slate-300 rounded-xl text-xs font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-3xs"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Chips Rápidos de Técnicos Habituales (1 solo click) */}
+                    <div className="space-y-1.5 pt-1">
+                      <div className="flex flex-wrap items-center justify-between gap-1">
+                        <span className="text-[10px] font-mono text-blue-900 font-bold uppercase flex items-center gap-1">
+                          <Sparkles className="h-3 w-3 text-amber-500" />
+                          <span>Sugerencias rápidas (haga clic para seleccionar al instante):</span>
+                        </span>
+                        {matchedBorrowerInDb && (
+                          <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md flex items-center gap-1">
+                            <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+                            <span>Técnico Registrado en BD</span>
+                          </span>
+                        )}
+                        {!matchedBorrowerInDb && borrowerName.trim().length >= 3 && (
+                          <button
+                            type="button"
+                            onClick={() => handleSaveNewBorrowerToDb(borrowerName, borrowerDepartment)}
+                            className="text-[10px] font-bold text-blue-700 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2 py-0.5 rounded-md flex items-center gap-1 cursor-pointer"
+                          >
+                            <UserPlus className="h-3 w-3" />
+                            <span>+ Guardar prestatario en BD</span>
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="flex flex-wrap gap-1.5 p-2 bg-white/80 rounded-xl border border-blue-150">
+                        {borrowersDb.slice(0, 6).map((b) => {
+                          const isSelected = borrowerName.trim().toLowerCase() === b.name.toLowerCase();
+                          return (
+                            <button
+                              key={b.id}
+                              type="button"
+                              onClick={() => handleSelectBorrowerSuggestion(b)}
+                              className={`px-2.5 py-1.5 rounded-lg text-[10px] font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                                isSelected
+                                  ? 'bg-blue-600 text-white shadow-xs ring-2 ring-blue-300'
+                                  : 'bg-white hover:bg-blue-50 text-slate-700 border border-slate-200'
+                              }`}
+                            >
+                              <User className={`h-3 w-3 ${isSelected ? 'text-blue-100' : 'text-slate-400'}`} />
+                              <span>{b.name}</span>
+                              <span className={`text-[9px] font-mono opacity-80 ${isSelected ? 'text-blue-200' : 'text-slate-400'}`}>
+                                ({b.role.split(' ')[0]})
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {newBorrowerFeedback && (
+                      <div className="p-2 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-[10px] font-bold flex items-center gap-1.5 animate-fadeIn">
+                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+                        <span>{newBorrowerFeedback}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Campo de Fecha Estimada de Devolución */}
+                  <div className="pt-2 border-t border-blue-200/80 space-y-2">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                      <label className="text-[11px] font-bold text-blue-950 flex items-center gap-1.5">
+                        <Calendar className="h-3.5 w-3.5 text-blue-600" />
+                        <span>Fecha Estimada de Devolución de la Herramienta (Opcional):</span>
+                      </label>
+                      <span className="text-[10px] text-blue-700 font-mono">
+                        {expectedReturnDate ? `Programada: ${expectedReturnDate}` : 'Sin fecha fijada (abierta)'}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                      <input
+                        type="date"
+                        value={expectedReturnDate}
+                        onChange={(e) => setExpectedReturnDate(e.target.value)}
+                        className="px-3 py-1.5 bg-white border border-blue-200 rounded-xl text-xs font-mono font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-3xs"
+                      />
+
+                      {/* Quick Date Presets */}
+                      <div className="flex flex-wrap items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const today = new Date().toISOString().split('T')[0];
+                            setExpectedReturnDate(today);
+                          }}
+                          className="px-2 py-1 bg-white hover:bg-blue-100 text-blue-900 border border-blue-200 rounded-lg text-[9px] font-mono font-bold cursor-pointer"
+                        >
+                          Hoy (Fin de Turno)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const d = new Date();
+                            d.setDate(d.getDate() + 1);
+                            setExpectedReturnDate(d.toISOString().split('T')[0]);
+                          }}
+                          className="px-2 py-1 bg-white hover:bg-blue-100 text-blue-900 border border-blue-200 rounded-lg text-[9px] font-mono font-bold cursor-pointer"
+                        >
+                          Mañana
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const d = new Date();
+                            d.setDate(d.getDate() + 3);
+                            setExpectedReturnDate(d.toISOString().split('T')[0]);
+                          }}
+                          className="px-2 py-1 bg-white hover:bg-blue-100 text-blue-900 border border-blue-200 rounded-lg text-[9px] font-mono font-bold cursor-pointer"
+                        >
+                          En 3 días
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const d = new Date();
+                            d.setDate(d.getDate() + 7);
+                            setExpectedReturnDate(d.toISOString().split('T')[0]);
+                          }}
+                          className="px-2 py-1 bg-white hover:bg-blue-100 text-blue-900 border border-blue-200 rounded-lg text-[9px] font-mono font-bold cursor-pointer"
+                        >
+                          En 1 semana
+                        </button>
+                        {expectedReturnDate && (
+                          <button
+                            type="button"
+                            onClick={() => setExpectedReturnDate('')}
+                            className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-[9px] font-mono font-bold cursor-pointer"
+                          >
+                            ✕ Quitar
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="p-2.5 bg-blue-100/60 rounded-xl border border-blue-200 text-[10px] text-blue-900 flex items-center gap-2">
+                    <ShieldCheck className="h-4 w-4 text-blue-700 shrink-0" />
+                    <span>
+                      Al procesar, se generará el <strong>Vale Oficial de Préstamo y Resguardo</strong> con espacio para firmas de entrega y recepción.
+                    </span>
+                  </div>
                 </div>
               )}
 
-              {/* Campos opcionales: Guía y Notas */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-                <div>
-                  <label className="text-[11px] font-bold text-slate-600 block mb-1">
-                    Número de Guía / Placas (Opcional):
-                  </label>
+              {/* PANEL CONDICIONAL: SI SE TRATA DE OTRA MODALIDAD */}
+              {dispatchType === 'other' && (
+                <div className="p-4 bg-purple-50/90 border-2 border-purple-300 rounded-3xl space-y-2.5 animate-fadeIn">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="h-4 w-4 text-purple-700" />
+                    <span className="text-xs font-black uppercase font-mono text-purple-950">
+                      Especifique la Modalidad de Salida:
+                    </span>
+                  </div>
                   <input
                     type="text"
-                    value={trackingNumber}
-                    onChange={(e) => setTrackingNumber(e.target.value)}
-                    placeholder="Ej. FEDEX-98765432 o Placas ABC-123..."
-                    className="w-full px-3.5 py-2 bg-slate-50 border border-slate-250 rounded-xl text-xs font-mono font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    value={customDispatchTypeText}
+                    onChange={(e) => setCustomDispatchTypeText(e.target.value)}
+                    placeholder="Ej. Salida por calibración externa, muestra a cliente, demostración técnica, donación, garantía..."
+                    className="w-full px-3.5 py-2.5 bg-white border border-purple-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-500 shadow-3xs"
+                    required
                   />
+                  <div className="flex flex-wrap gap-1.5">
+                    {['Calibración y Metrología', 'Muestra a Cliente', 'Demostración Técnica', 'Traslado a Obra', 'Garantía con Proveedor'].map(sug => (
+                      <button
+                        key={sug}
+                        type="button"
+                        onClick={() => setCustomDispatchTypeText(sug)}
+                        className="px-2 py-0.5 bg-purple-100 hover:bg-purple-200 text-purple-900 rounded-md text-[9px] font-bold cursor-pointer"
+                      >
+                        {sug}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* SECCIÓN B: TRANSPORTE Y MEDIO DE ENTREGA */}
+              <div className="space-y-3 pt-3 border-t border-slate-150">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-black uppercase font-mono tracking-wider text-slate-800 flex items-center gap-1.5">
+                    <Truck className="h-4 w-4 text-indigo-600" />
+                    <span>Método de Transporte / Entrega</span>
+                  </label>
+                  <span className="text-[10px] text-slate-400 font-medium">
+                    Logística de traslado
+                  </span>
                 </div>
 
-                <div>
-                  <label className="text-[11px] font-bold text-slate-600 block mb-1">
-                    Instrucciones / Notas (Opcional):
-                  </label>
-                  <input
-                    type="text"
-                    value={notes}
-                    onChange={(e) => setNotes(e.target.value)}
-                    placeholder="Ej. Entregar en rampa 2, material frágil..."
-                    className="w-full px-3.5 py-2 bg-slate-50 border border-slate-250 rounded-xl text-xs font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                  {deliveryOptions.map(opt => {
+                    const Icon = opt.icon;
+                    const isSelected = deliveryMethod === opt.id;
+                    return (
+                      <div
+                        key={opt.id}
+                        onClick={() => setDeliveryMethod(opt.id)}
+                        className={`p-3.5 rounded-2xl border transition cursor-pointer flex flex-col justify-between gap-2 ${
+                          isSelected
+                            ? 'bg-indigo-50/70 border-indigo-400 text-indigo-950 shadow-2xs ring-1 ring-indigo-400'
+                            : 'bg-slate-50/50 hover:bg-slate-50 border-slate-200 text-slate-700'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className={`h-8 w-8 rounded-xl flex items-center justify-center ${
+                            isSelected ? 'bg-indigo-600 text-white' : 'bg-white text-slate-500 border border-slate-200'
+                          }`}>
+                            <Icon className="h-4 w-4" />
+                          </div>
+                          <span className={`text-[9px] font-mono font-bold px-2 py-0.5 rounded-full ${
+                            isSelected ? 'bg-indigo-200/80 text-indigo-900' : 'bg-slate-100 text-slate-500'
+                          }`}>
+                            {opt.badge}
+                          </span>
+                        </div>
+
+                        <div>
+                          <h5 className="text-xs font-bold leading-tight">
+                            {opt.label}
+                          </h5>
+                          <p className="text-[10px] text-slate-400 leading-snug mt-0.5">
+                            {opt.desc}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Input interactivo si se selecciona 'Otro Medio de Entrega' */}
+                {deliveryMethod === '__OTHER__' && (
+                  <div className="p-3 bg-indigo-50/90 border-2 border-indigo-300 rounded-2xl space-y-1.5 animate-fadeIn">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-mono font-black uppercase text-indigo-900 tracking-wider">
+                        ✏️ ¿De qué se trata el medio de entrega? (especifique):
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setDeliveryMethod('Reparto Local (Unidad Propia)')}
+                        className="text-[10px] text-slate-400 hover:text-slate-600 font-bold cursor-pointer"
+                      >
+                        ✕ Cancelar
+                      </button>
+                    </div>
+                    <input
+                      type="text"
+                      value={customDeliveryMethodText}
+                      onChange={(e) => setCustomDeliveryMethodText(e.target.value)}
+                      placeholder="Ej. Transporte de personal, Flete tercerizado, Taxi de carga..."
+                      className="w-full px-3.5 py-2 bg-white border border-indigo-300 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      required
+                    />
+                  </div>
+                )}
+
+                {/* Campos opcionales: Guía y Notas */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-600 block mb-1">
+                      Número de Guía / Placas (Opcional):
+                    </label>
+                    <input
+                      type="text"
+                      value={trackingNumber}
+                      onChange={(e) => setTrackingNumber(e.target.value)}
+                      placeholder="Ej. FEDEX-98765432 o Placas ABC-123..."
+                      className="w-full px-3.5 py-2 bg-slate-50 border border-slate-250 rounded-xl text-xs font-mono font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-600 block mb-1">
+                      Instrucciones / Notas (Opcional):
+                    </label>
+                    <input
+                      type="text"
+                      value={notes}
+                      onChange={(e) => setNotes(e.target.value)}
+                      placeholder="Ej. Entregar en rampa 2, material frágil..."
+                      className="w-full px-3.5 py-2 bg-slate-50 border border-slate-250 rounded-xl text-xs font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -970,6 +1736,38 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
                   )}
                 </div>
 
+                {/* Modalidad de Salida */}
+                <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-1">
+                  <span className="text-[10px] font-mono uppercase font-bold text-slate-400 block">
+                    Modalidad de Salida:
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className={`text-[11px] font-extrabold px-2 py-0.5 rounded-lg ${
+                      dispatchType === 'loan'
+                        ? 'bg-blue-100 text-blue-900 border border-blue-200'
+                        : dispatchType === 'other'
+                        ? 'bg-purple-100 text-purple-900 border border-purple-200'
+                        : 'bg-emerald-100 text-emerald-900 border border-emerald-200'
+                    }`}>
+                      {dispatchType === 'loan' ? '🔧 Préstamo de Herramienta' : dispatchType === 'other' ? `🏷️ ${customDispatchTypeText || 'Otra Modalidad'}` : '📦 Salida Definitiva'}
+                    </span>
+                  </div>
+                  {dispatchType === 'loan' && (
+                    <div className="text-[11px] text-slate-700 pt-1 border-t border-slate-200 mt-1 space-y-0.5">
+                      <span className="text-slate-400 text-[10px] block font-mono">Prestatario Asignado:</span>
+                      <strong className="text-blue-900 block font-bold">
+                        {borrowerName.trim() || <span className="italic text-slate-400">Por definir</span>}
+                      </strong>
+                      {borrowerDepartment && <span className="text-slate-500 block text-[10px]">{borrowerDepartment}</span>}
+                      {expectedReturnDate && (
+                        <span className="text-blue-700 font-mono text-[10px] block font-bold">
+                          Retorno: {expectedReturnDate}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+
                 {/* Cantidad */}
                 <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200/80 flex items-center justify-between">
                   <span className="text-[10px] font-mono uppercase font-bold text-slate-400">
@@ -996,7 +1794,7 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
                     Medio de Entrega:
                   </span>
                   <span className="font-bold text-slate-900 block truncate">
-                    {deliveryMethod}
+                    {deliveryMethod === '__OTHER__' ? (customDeliveryMethodText || 'Otro') : deliveryMethod}
                   </span>
                 </div>
 
@@ -1097,12 +1895,13 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
                 <thead>
                   <tr className="border-b border-slate-200 text-[10px] font-mono font-bold text-slate-400 uppercase tracking-wider">
                     <th className="pb-3 text-left">Folio / Fecha</th>
+                    <th className="pb-3 text-left">Modalidad</th>
                     <th className="pb-3 text-left">Producto / SKU</th>
                     <th className="pb-3 text-center">Cant.</th>
                     <th className="pb-3 text-left">Celdas de Picking</th>
-                    <th className="pb-3 text-left">Destino</th>
+                    <th className="pb-3 text-left">Destino / Prestatario</th>
                     <th className="pb-3 text-left">Medio de Entrega</th>
-                    <th className="pb-3 text-left">Operador</th>
+                    <th className="pb-3 text-left">Operador / Estado</th>
                     <th className="pb-3 text-right">Comprobante</th>
                   </tr>
                 </thead>
@@ -1114,6 +1913,44 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
                         <span className="text-[10px] text-slate-400">
                           {new Date(rec.timestamp).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
                         </span>
+                      </td>
+
+                      <td className="py-3">
+                        {rec.dispatchType === 'loan' ? (
+                          <div className="space-y-1">
+                            <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-900 text-[9px] font-mono font-black border border-blue-200 flex items-center gap-1 w-max">
+                              <Wrench className="h-2.5 w-2.5 text-blue-700" />
+                              <span>Préstamo</span>
+                            </span>
+                            {rec.loanStatus === 'returned' ? (
+                              <span className="inline-block px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800 text-[9px] font-bold">
+                                Devuelto ✓
+                              </span>
+                            ) : (
+                              <div className="flex items-center gap-1">
+                                <span className="inline-block px-1.5 py-0.2 rounded bg-amber-100 text-amber-900 text-[9px] font-bold">
+                                  En Préstamo
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleReturnLoan(rec.id)}
+                                  className="px-1.5 py-0.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[8px] font-bold cursor-pointer shadow-3xs"
+                                  title="Registrar devolución de la herramienta"
+                                >
+                                  Devolver
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        ) : rec.dispatchType === 'other' ? (
+                          <span className="px-2 py-0.5 rounded-full bg-purple-100 text-purple-900 text-[9px] font-mono font-bold border border-purple-200">
+                            {rec.dispatchTypeLabel || 'Otra'}
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 text-[9px] font-mono font-bold">
+                            Salida Definitiva
+                          </span>
+                        )}
                       </td>
 
                       <td className="py-3">
@@ -1133,8 +1970,19 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
                         )}
                       </td>
 
-                      <td className="py-3 font-bold text-slate-800">
-                        {rec.destination}
+                      <td className="py-3">
+                        <div className="font-bold text-slate-800">{rec.destination}</div>
+                        {rec.borrowerName && (
+                          <div className="text-[10px] text-blue-800 font-mono flex items-center gap-1 mt-0.5">
+                            <UserCheck className="h-3 w-3 text-blue-600" />
+                            <span>Técnico: {rec.borrowerName}</span>
+                          </div>
+                        )}
+                        {rec.expectedReturnDate && rec.loanStatus !== 'returned' && (
+                          <div className="text-[9px] text-slate-400 font-mono">
+                            Retorno est.: {rec.expectedReturnDate}
+                          </div>
+                        )}
                       </td>
 
                       <td className="py-3 text-slate-600">
@@ -1149,7 +1997,12 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
                       </td>
 
                       <td className="py-3 font-mono text-[11px] text-slate-600">
-                        {rec.operator}
+                        <div>{rec.operator}</div>
+                        {rec.returnOperator && (
+                          <div className="text-[9px] text-emerald-700 font-bold">
+                            Recibió: {rec.returnOperator}
+                          </div>
+                        )}
                       </td>
 
                       <td className="py-3 text-right">
@@ -1390,13 +2243,26 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
           <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-lg w-full overflow-hidden animate-scaleIn">
             
             {/* Header del Ticket */}
-            <div className="bg-gradient-to-r from-amber-600 to-orange-600 text-white p-5 flex items-center justify-between">
+            <div className={`text-white p-5 flex items-center justify-between ${
+              lastDispatchRecord.dispatchType === 'loan'
+                ? 'bg-gradient-to-r from-blue-700 via-indigo-700 to-slate-900'
+                : 'bg-gradient-to-r from-amber-600 to-orange-600'
+            }`}>
               <div className="space-y-0.5">
-                <span className="text-[10px] font-mono uppercase tracking-widest font-bold opacity-80">
-                  Comprobante Oficial WMS
+                <span className="text-[10px] font-mono uppercase tracking-widest font-bold opacity-80 flex items-center gap-1.5">
+                  {lastDispatchRecord.dispatchType === 'loan' ? (
+                    <>
+                      <Wrench className="h-3 w-3 text-blue-300" />
+                      <span>Comprobante de Resguardo y Custodia</span>
+                    </>
+                  ) : (
+                    <span>Comprobante Oficial WMS</span>
+                  )}
                 </span>
                 <h3 className="text-base font-black">
-                  Vale de Salida de Almacén
+                  {lastDispatchRecord.dispatchType === 'loan'
+                    ? 'Vale de Préstamo de Herramienta y Material'
+                    : 'Vale de Salida de Almacén'}
                 </h3>
               </div>
               <button
@@ -1410,14 +2276,26 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
 
             {/* Cuerpo del Ticket */}
             <div className="p-6 space-y-4 text-xs" id="printable-dispatch-ticket">
-              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center gap-2.5 text-emerald-900 font-bold">
-                <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0" />
-                <span>¡Salida completada exitosamente! El stock ha sido descontado.</span>
+              <div className={`p-3 rounded-2xl flex items-center gap-2.5 font-bold ${
+                lastDispatchRecord.dispatchType === 'loan'
+                  ? 'bg-blue-50 border border-blue-200 text-blue-900'
+                  : 'bg-emerald-50 border border-emerald-200 text-emerald-900'
+              }`}>
+                {lastDispatchRecord.dispatchType === 'loan' ? (
+                  <ShieldCheck className="h-5 w-5 text-blue-600 shrink-0" />
+                ) : (
+                  <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0" />
+                )}
+                <span>
+                  {lastDispatchRecord.dispatchType === 'loan'
+                    ? '¡Préstamo registrado exitosamente! Material sujeto a devolución obligatoria.'
+                    : '¡Salida completada exitosamente! El stock ha sido descontado.'}
+                </span>
               </div>
 
               <div className="grid grid-cols-2 gap-3 p-3 bg-slate-50 rounded-2xl border border-slate-200">
                 <div>
-                  <span className="text-[10px] font-mono text-slate-400 block">Folio de Salida:</span>
+                  <span className="text-[10px] font-mono text-slate-400 block">Folio de Movimiento:</span>
                   <strong className="text-sm font-mono font-black text-slate-900">{lastDispatchRecord.id}</strong>
                 </div>
                 <div>
@@ -1428,17 +2306,62 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
                 </div>
               </div>
 
+              {/* Bloque especial de Préstamo */}
+              {lastDispatchRecord.dispatchType === 'loan' && (
+                <div className="p-3 bg-blue-50/70 border border-blue-200 rounded-2xl space-y-1.5">
+                  <span className="text-[9px] font-mono font-black uppercase text-blue-900 tracking-wider block">
+                    📋 Datos del Prestatario / Responsable:
+                  </span>
+                  <div className="grid grid-cols-2 gap-2 text-[11px]">
+                    <div>
+                      <span className="text-slate-400 text-[10px] block">Nombre del Técnico:</span>
+                      <strong className="text-slate-900">{lastDispatchRecord.borrowerName || 'No especificado'}</strong>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 text-[10px] block">Departamento / Área:</span>
+                      <span className="text-slate-800 font-medium">{lastDispatchRecord.borrowerDepartment || 'Taller / Obra'}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 text-[10px] block">Fecha Programada de Retorno:</span>
+                      <span className="font-mono font-bold text-blue-700">
+                        {lastDispatchRecord.expectedReturnDate || 'Fin de turno / Abierta'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 text-[10px] block">Estado del Préstamo:</span>
+                      <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-mono font-black ${
+                        lastDispatchRecord.loanStatus === 'returned'
+                          ? 'bg-emerald-200 text-emerald-900'
+                          : 'bg-amber-200 text-amber-900'
+                      }`}>
+                        {lastDispatchRecord.loanStatus === 'returned' ? 'DEVUELTO' : 'EN PRÉSTAMO ACTIVO'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="space-y-2 border-t border-b border-slate-150 py-3">
                 <div className="flex justify-between items-baseline">
-                  <span className="text-slate-500 font-medium">Producto:</span>
+                  <span className="text-slate-500 font-medium">Modalidad:</span>
+                  <span className="font-bold text-slate-900 text-right">
+                    {lastDispatchRecord.dispatchType === 'loan'
+                      ? 'Préstamo de Herramienta / Material'
+                      : lastDispatchRecord.dispatchType === 'other'
+                      ? (lastDispatchRecord.dispatchTypeLabel || 'Otra Modalidad')
+                      : 'Salida Definitiva'}
+                  </span>
+                </div>
+                <div className="flex justify-between items-baseline">
+                  <span className="text-slate-500 font-medium">Producto / Herramienta:</span>
                   <strong className="text-slate-900 text-right">{lastDispatchRecord.productName}</strong>
                 </div>
                 <div className="flex justify-between items-baseline">
-                  <span className="text-slate-500 font-medium">SKU:</span>
+                  <span className="text-slate-500 font-medium">Código SKU:</span>
                   <span className="font-mono font-extrabold text-amber-800">{lastDispatchRecord.sku}</span>
                 </div>
                 <div className="flex justify-between items-baseline">
-                  <span className="text-slate-500 font-medium">Cantidad de Salida:</span>
+                  <span className="text-slate-500 font-medium">Cantidad:</span>
                   <span className="font-mono font-black text-base text-slate-900">{lastDispatchRecord.qty} unidades</span>
                 </div>
                 <div className="flex justify-between items-baseline">
@@ -1448,7 +2371,7 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
                   </span>
                 </div>
                 <div className="flex justify-between items-baseline">
-                  <span className="text-slate-500 font-medium">Destino / Cliente:</span>
+                  <span className="text-slate-500 font-medium">Destino / Ubicación:</span>
                   <strong className="text-slate-900 text-right">{lastDispatchRecord.destination}</strong>
                 </div>
                 <div className="flex justify-between items-baseline">
@@ -1462,13 +2385,37 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
                   </div>
                 )}
                 <div className="flex justify-between items-baseline">
-                  <span className="text-slate-500 font-medium">Operador Responsable:</span>
+                  <span className="text-slate-500 font-medium">Operador de Almacén:</span>
                   <span className="font-mono font-bold text-slate-800">{lastDispatchRecord.operator}</span>
                 </div>
               </div>
 
-              <div className="text-[10px] text-center text-slate-400">
-                Documento de control interno generado automáticamente por O-WMS PRO.
+              {/* Firmas de Responsabilidad */}
+              <div className="grid grid-cols-2 gap-4 pt-3">
+                <div className="text-center space-y-1">
+                  <div className="h-10 border-b border-dashed border-slate-300"></div>
+                  <span className="text-[9px] font-bold uppercase tracking-wider text-slate-500 block">
+                    Entregó (Almacén WMS)
+                  </span>
+                  <span className="text-[10px] font-mono text-slate-700">{lastDispatchRecord.operator}</span>
+                </div>
+                <div className="text-center space-y-1">
+                  <div className="h-10 border-b border-dashed border-slate-300"></div>
+                  <span className="text-[9px] font-bold uppercase tracking-wider text-slate-500 block">
+                    {lastDispatchRecord.dispatchType === 'loan'
+                      ? 'Recibió en Resguardo (Técnico)'
+                      : 'Recibió Conforme'}
+                  </span>
+                  <span className="text-[10px] font-mono text-slate-700">
+                    {lastDispatchRecord.borrowerName || lastDispatchRecord.destination}
+                  </span>
+                </div>
+              </div>
+
+              <div className="text-[9px] text-center text-slate-400 leading-tight">
+                {lastDispatchRecord.dispatchType === 'loan'
+                  ? 'El colaborador se compromete a salvaguardar el equipo recibido y retornarlo en óptimas condiciones operativas.'
+                  : 'Documento de control interno generado automáticamente por O-WMS PRO.'}
               </div>
             </div>
 

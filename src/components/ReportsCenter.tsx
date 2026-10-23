@@ -1313,175 +1313,385 @@ export default function ReportsCenter({
 
               {selectedReport === 'external_movements' && (
                 <div className="space-y-4">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                  {/* Selector de Sub-Pestaña: Inventario vs Movimientos */}
+                  <div className="flex flex-wrap items-center justify-between gap-2 p-1.5 bg-slate-100/80 rounded-2xl border border-slate-200">
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setExtReportSubView('inventory')}
+                        className={`px-3.5 py-1.5 rounded-xl text-xs font-bold font-mono transition flex items-center gap-1.5 cursor-pointer ${
+                          extReportSubView === 'inventory'
+                            ? 'bg-teal-600 text-white shadow-xs'
+                            : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+                        }`}
+                      >
+                        <Package className="h-3.5 w-3.5" />
+                        <span>1. Inventario y Existencias Físicas ({filteredExtInventory.length} SKUs)</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setExtReportSubView('movements')}
+                        className={`px-3.5 py-1.5 rounded-xl text-xs font-bold font-mono transition flex items-center gap-1.5 cursor-pointer ${
+                          extReportSubView === 'movements'
+                            ? 'bg-teal-600 text-white shadow-xs'
+                            : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+                        }`}
+                      >
+                        <ArrowLeftRight className="h-3.5 w-3.5" />
+                        <span>2. Bitácora de Movimientos ({filteredExtTransactions.length})</span>
+                      </button>
+                    </div>
+
                     <div className="flex items-center gap-2">
-                      <div className="p-1.5 bg-teal-100 text-teal-800 rounded-lg">
-                        <ArrowLeftRight className="h-5 w-5" />
-                      </div>
-                      <div>
-                        <h4 className="text-sm font-extrabold text-slate-800">Bitácora de Movimientos de Almacén Externo</h4>
-                        <span className="text-[10px] font-mono text-teal-700 font-bold">Entradas, Salidas y Traslados en Sedes Satélites / 3PL</span>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setIsPrintModalOpen(true)}
-                      className="px-3.5 py-1.5 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-3xs shrink-0"
-                    >
-                      <Printer className="h-4 w-4" />
-                      <span>Imprimir Reporte Oficial</span>
-                    </button>
-                  </div>
-
-                  <p className="text-xs text-slate-500 leading-relaxed">
-                    Historial cronológico auditable de entradas y salidas registradas en almacenes satélites, centros 3PL y depósitos de obra. Permite imprimir reportes oficiales con membrete y firmas de responsabilidad legal.
-                  </p>
-
-                  {/* Filters Bar inside preview */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 p-3 bg-teal-50/60 border border-teal-200/90 rounded-2xl">
-                    <div>
-                      <label className="text-[9px] font-mono font-bold text-teal-900 block uppercase mb-1">Almacén Externo:</label>
-                      <select
-                        value={extWhFilter}
-                        onChange={(e) => setExtWhFilter(e.target.value)}
-                        className="w-full px-2.5 py-1.5 bg-white border border-teal-300 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-teal-500 cursor-pointer shadow-3xs"
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsPrintModalOpen(true);
+                        }}
+                        className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-3xs"
+                        title="Imprimir formato oficial con membrete y firmas"
                       >
-                        <option value="all">📦 Todos los Almacenes ({extWarehouses.length})</option>
-                        {extWarehouses.map(wh => (
-                          <option key={wh.id} value={wh.id}>[{wh.code}] {wh.name}</option>
-                        ))}
-                      </select>
-                    </div>
+                        <Printer className="h-3.5 w-3.5 text-teal-400" />
+                        <span>{extReportSubView === 'inventory' ? 'Imprimir Inventario Oficial' : 'Imprimir Bitácora Oficial'}</span>
+                      </button>
 
-                    <div>
-                      <label className="text-[9px] font-mono font-bold text-teal-900 block uppercase mb-1">Tipo de Movimiento:</label>
-                      <select
-                        value={extTypeFilter}
-                        onChange={(e) => setExtTypeFilter(e.target.value as any)}
-                        className="w-full px-2.5 py-1.5 bg-white border border-teal-300 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-teal-500 cursor-pointer shadow-3xs"
+                      <button
+                        type="button"
+                        onClick={extReportSubView === 'inventory' ? handleExportExternalInventory : handleExportExternalMovements}
+                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-3xs"
                       >
-                        <option value="all">🔄 Todas las Operaciones</option>
-                        <option value="Entrada">📥 Solo Entradas (Inbound)</option>
-                        <option value="Salida">📤 Solo Salidas (Outbound)</option>
-                      </select>
+                        <FileDown className="h-3.5 w-3.5" />
+                        <span>Excel</span>
+                      </button>
                     </div>
+                  </div>
 
-                    <div>
-                      <label className="text-[9px] font-mono font-bold text-teal-900 block uppercase mb-1">Búsqueda rápida:</label>
-                      <div className="relative">
-                        <input
-                          type="text"
-                          value={extSearchTerm}
-                          onChange={(e) => setExtSearchTerm(e.target.value)}
-                          placeholder="SKU, producto, folio, chofer..."
-                          className="w-full pl-7 pr-2.5 py-1.5 bg-white border border-teal-300 rounded-xl text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-teal-500 shadow-3xs"
-                        />
-                        <Search className="h-3.5 w-3.5 text-slate-400 absolute left-2 top-2" />
+                  {/* VISTA A: INVENTARIO Y EXISTENCIAS FÍSICAS */}
+                  {extReportSubView === 'inventory' && (
+                    <div className="space-y-4 animate-fadeIn">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-2">
+                        <div>
+                          <h4 className="text-sm font-extrabold text-slate-800 flex items-center gap-2">
+                            <span className="p-1 rounded-md bg-teal-100 text-teal-800">
+                              <Boxes className="h-4 w-4" />
+                            </span>
+                            <span>Inventario Físico en Almacenes Externos & Sedes 3PL</span>
+                          </h4>
+                          <span className="text-[10px] font-mono text-teal-700 font-bold">
+                            Catálogo maestro de existencias, valuación monetaria y control de stock mínimo
+                          </span>
+                        </div>
                       </div>
-                    </div>
-                  </div>
 
-                  {/* KPIs */}
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                    <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-center">
-                      <span className="text-[8px] font-mono font-bold text-slate-400 block uppercase">Movimientos</span>
-                      <span className="text-base font-black font-mono text-slate-900 mt-0.5 block">{filteredExtTransactions.length}</span>
-                    </div>
-                    <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-center">
-                      <span className="text-[8px] font-mono font-bold text-emerald-700 block uppercase">Entradas</span>
-                      <span className="text-base font-black font-mono text-emerald-800 mt-0.5 block">
-                        {filteredExtTransactions.filter(t => t.type === 'Entrada').length} ({filteredExtTransactions.filter(t => t.type === 'Entrada').reduce((s, t) => s + t.qty, 0)} uds)
-                      </span>
-                    </div>
-                    <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-center">
-                      <span className="text-[8px] font-mono font-bold text-rose-700 block uppercase">Salidas</span>
-                      <span className="text-base font-black font-mono text-rose-800 mt-0.5 block">
-                        {filteredExtTransactions.filter(t => t.type === 'Salida').length} ({filteredExtTransactions.filter(t => t.type === 'Salida').reduce((s, t) => s + t.qty, 0)} uds)
-                      </span>
-                    </div>
-                    <div className="p-3 bg-teal-50 border border-teal-200 rounded-xl text-center">
-                      <span className="text-[8px] font-mono font-bold text-teal-700 block uppercase">Unidades Totales</span>
-                      <span className="text-base font-black font-mono text-teal-900 mt-0.5 block">
-                        {filteredExtTransactions.reduce((s, t) => s + t.qty, 0).toLocaleString()}
-                      </span>
-                    </div>
-                  </div>
+                      {/* Filtros de Inventario */}
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 p-3 bg-teal-50/60 border border-teal-200/90 rounded-2xl">
+                        <div>
+                          <label className="text-[9px] font-mono font-bold text-teal-900 block uppercase mb-1">Almacén Externo:</label>
+                          <select
+                            value={extWhFilter}
+                            onChange={(e) => setExtWhFilter(e.target.value)}
+                            className="w-full px-2.5 py-1.5 bg-white border border-teal-300 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-teal-500 cursor-pointer shadow-3xs"
+                          >
+                            <option value="all">📦 Todos los Almacenes Externos ({extWarehouses.length})</option>
+                            {extWarehouses.map(wh => (
+                              <option key={wh.id} value={wh.id}>[{wh.code}] {wh.name}</option>
+                            ))}
+                          </select>
+                        </div>
 
-                  {/* Interactive Table */}
-                  <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-3xs">
-                    <div className="max-h-64 overflow-y-auto">
-                      <table className="w-full text-left border-collapse text-[10px]">
-                        <thead className="bg-slate-100/90 sticky top-0 font-mono text-[9px] uppercase font-bold text-slate-600 shadow-3xs">
-                          <tr>
-                            <th className="py-2 px-3 border-b border-slate-200">Folio / Fecha</th>
-                            <th className="py-2 px-3 border-b border-slate-200">Almacén</th>
-                            <th className="py-2 px-3 border-b border-slate-200">Tipo</th>
-                            <th className="py-2 px-3 border-b border-slate-200">SKU / Producto</th>
-                            <th className="py-2 px-3 border-b border-slate-200 text-right">Cant.</th>
-                            <th className="py-2 px-3 border-b border-slate-200">Origen / Destino</th>
-                            <th className="py-2 px-3 border-b border-slate-200">Transporte</th>
-                            <th className="py-2 px-3 border-b border-slate-200">Operador</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-150">
-                          {filteredExtTransactions.length === 0 ? (
-                            <tr>
-                              <td colSpan={8} className="text-center py-6 text-slate-400 font-medium">
-                                No se encontraron movimientos en almacenes externos con los filtros seleccionados
-                              </td>
-                            </tr>
-                          ) : (
-                            filteredExtTransactions.slice(0, 20).map(tx => {
-                              const wh = extWarehouses.find(w => w.id === tx.warehouseId);
-                              return (
-                                <tr key={tx.id} className="hover:bg-slate-50/80 transition-colors">
-                                  <td className="py-2 px-3 font-mono">
-                                    <div className="font-bold text-slate-900">{tx.id}</div>
-                                    <div className="text-[9px] text-slate-400">{new Date(tx.timestamp).toLocaleDateString('es-ES')}</div>
-                                  </td>
-                                  <td className="py-2 px-3 font-semibold text-slate-700">
-                                    <span className="font-mono bg-slate-100 text-slate-800 px-1.5 py-0.5 rounded text-[9px]">
-                                      {wh ? wh.code : tx.warehouseId}
-                                    </span>
-                                  </td>
-                                  <td className="py-2 px-3">
-                                    <span className={`px-2 py-0.5 rounded-md text-[8px] font-black font-mono uppercase ${
-                                      tx.type === 'Entrada' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
-                                    }`}>
-                                      {tx.type}
-                                    </span>
-                                  </td>
-                                  <td className="py-2 px-3">
-                                    <div className="font-mono font-bold text-slate-900">{tx.sku}</div>
-                                    <div className="text-[9px] text-slate-500 truncate max-w-[140px]">{tx.productName}</div>
-                                  </td>
-                                  <td className="py-2 px-3 text-right font-mono font-black text-slate-900">
-                                    {tx.qty}
-                                  </td>
-                                  <td className="py-2 px-3 text-slate-600 truncate max-w-[130px]" title={tx.sourceOrDestination}>
-                                    {tx.sourceOrDestination}
-                                  </td>
-                                  <td className="py-2 px-3 text-slate-500 truncate max-w-[110px]" title={tx.carrierOrDelivery || ''}>
-                                    {tx.carrierOrDelivery || '—'}
-                                  </td>
-                                  <td className="py-2 px-3 text-slate-500 text-[9px]">
-                                    {tx.operator}
+                        <div>
+                          <label className="text-[9px] font-mono font-bold text-teal-900 block uppercase mb-1">Categoría:</label>
+                          <select
+                            value={extCategoryFilter}
+                            onChange={(e) => setExtCategoryFilter(e.target.value)}
+                            className="w-full px-2.5 py-1.5 bg-white border border-teal-300 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-teal-500 cursor-pointer shadow-3xs"
+                          >
+                            <option value="all">🏷️ Todas las Categorías ({extCategoriesList.length})</option>
+                            {extCategoriesList.map(cat => (
+                              <option key={cat} value={cat}>{cat}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="text-[9px] font-mono font-bold text-teal-900 block uppercase mb-1">Búsqueda rápida:</label>
+                          <div className="relative">
+                            <input
+                              type="text"
+                              value={extSearchTerm}
+                              onChange={(e) => setExtSearchTerm(e.target.value)}
+                              placeholder="SKU, producto, ubicación..."
+                              className="w-full pl-7 pr-2.5 py-1.5 bg-white border border-teal-300 rounded-xl text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-teal-500 shadow-3xs"
+                            />
+                            <Search className="h-3.5 w-3.5 text-slate-400 absolute left-2 top-2" />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* KPIs de Inventario */}
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                        <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-center">
+                          <span className="text-[8px] font-mono font-bold text-slate-400 block uppercase">SKUs Catalogados</span>
+                          <span className="text-base font-black font-mono text-slate-900 mt-0.5 block">{filteredExtInventory.length}</span>
+                        </div>
+                        <div className="p-3 bg-teal-50 border border-teal-200 rounded-xl text-center">
+                          <span className="text-[8px] font-mono font-bold text-teal-700 block uppercase">Unidades Totales</span>
+                          <span className="text-base font-black font-mono text-teal-900 mt-0.5 block">
+                            {filteredExtInventory.reduce((s, i) => s + (i.qty || 0), 0).toLocaleString()} uds
+                          </span>
+                        </div>
+                        <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-center">
+                          <span className="text-[8px] font-mono font-bold text-emerald-700 block uppercase">Valuación Total</span>
+                          <span className="text-base font-black font-mono text-emerald-900 mt-0.5 block">
+                            {getCurrencySymbol()}{filteredExtInventory.reduce((s, i) => s + ((i.qty || 0) * convertItemCost(i.cost || 0)), 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                        <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-center">
+                          <span className="text-[8px] font-mono font-bold text-rose-700 block uppercase">Alerta Stock Bajo</span>
+                          <span className="text-base font-black font-mono text-rose-800 mt-0.5 block">
+                            {filteredExtInventory.filter(i => (i.qty || 0) <= (i.minQty || 5)).length} SKUs
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Tabla Interactiva de Inventario Externo */}
+                      <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-3xs">
+                        <div className="max-h-72 overflow-y-auto">
+                          <table className="w-full text-left border-collapse text-[10px]">
+                            <thead className="bg-slate-100/90 sticky top-0 font-mono text-[9px] uppercase font-bold text-slate-600 shadow-3xs">
+                              <tr>
+                                <th className="py-2 px-3 border-b border-slate-200">SKU</th>
+                                <th className="py-2 px-3 border-b border-slate-200">Producto</th>
+                                <th className="py-2 px-3 border-b border-slate-200">Almacén Externo</th>
+                                <th className="py-2 px-3 border-b border-slate-200">Ubicación</th>
+                                <th className="py-2 px-3 border-b border-slate-200 text-right">Stock Actual</th>
+                                <th className="py-2 px-3 border-b border-slate-200 text-right">Mínimo</th>
+                                <th className="py-2 px-3 border-b border-slate-200 text-right">Costo Unit.</th>
+                                <th className="py-2 px-3 border-b border-slate-200 text-right">Valuación</th>
+                                <th className="py-2 px-3 border-b border-slate-200 text-center">Estado</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-150">
+                              {filteredExtInventory.length === 0 ? (
+                                <tr>
+                                  <td colSpan={9} className="text-center py-6 text-slate-400 font-medium">
+                                    No se encontraron artículos en inventario externo con los filtros seleccionados
                                   </td>
                                 </tr>
-                              );
-                            })
-                          )}
-                          {filteredExtTransactions.length > 20 && (
-                            <tr>
-                              <td colSpan={8} className="py-2.5 px-3 text-center text-slate-400 font-mono text-[9px] bg-slate-50 font-bold">
-                                ... y otros {filteredExtTransactions.length - 20} movimientos adicionales. Presione &quot;Imprimir Reporte Oficial&quot; o descargue en Excel para la auditoría total.
-                              </td>
-                            </tr>
-                          )}
-                        </tbody>
-                      </table>
+                              ) : (
+                                filteredExtInventory.map(item => {
+                                  const wh = extWarehouses.find(w => w.id === item.warehouseId);
+                                  const isLow = (item.qty || 0) <= (item.minQty || 5);
+                                  const unitCost = convertItemCost(item.cost || 0);
+                                  const totalVal = (item.qty || 0) * unitCost;
+                                  return (
+                                    <tr key={`${item.warehouseId}-${item.sku}`} className="hover:bg-slate-50/80 transition-colors">
+                                      <td className="py-2 px-3 font-mono font-bold text-slate-900">{item.sku}</td>
+                                      <td className="py-2 px-3 font-semibold text-slate-800">
+                                        <div>{item.name}</div>
+                                        <div className="text-[9px] text-slate-400 font-normal">{item.category}</div>
+                                      </td>
+                                      <td className="py-2 px-3 font-mono text-[9px] text-slate-600">
+                                        {wh ? `[${wh.code}] ${wh.name}` : item.warehouseId}
+                                      </td>
+                                      <td className="py-2 px-3 font-mono text-slate-500">
+                                        {item.locationInWarehouse || 'General'}
+                                      </td>
+                                      <td className="py-2 px-3 text-right font-mono font-black text-slate-900">
+                                        {item.qty} uds
+                                      </td>
+                                      <td className="py-2 px-3 text-right font-mono text-slate-500">
+                                        {item.minQty || 5}
+                                      </td>
+                                      <td className="py-2 px-3 text-right font-mono text-slate-600">
+                                        {getCurrencySymbol()}{unitCost.toFixed(2)}
+                                      </td>
+                                      <td className="py-2 px-3 text-right font-mono font-extrabold text-slate-900">
+                                        {getCurrencySymbol()}{totalVal.toFixed(2)}
+                                      </td>
+                                      <td className="py-2 px-3 text-center">
+                                        <span className={`px-2 py-0.5 rounded-full text-[8px] font-bold font-mono uppercase ${
+                                          isLow ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-800'
+                                        }`}>
+                                          {isLow ? 'Alerta Bajo' : 'Óptimo'}
+                                        </span>
+                                      </td>
+                                    </tr>
+                                  );
+                                })
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
                     </div>
-                  </div>
+                  )}
+
+                  {/* VISTA B: BITÁCORA DE MOVIMIENTOS */}
+                  {extReportSubView === 'movements' && (
+                    <div className="space-y-4 animate-fadeIn">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-2">
+                        <div>
+                          <h4 className="text-sm font-extrabold text-slate-800 flex items-center gap-2">
+                            <span className="p-1 rounded-md bg-teal-100 text-teal-800">
+                              <ArrowLeftRight className="h-4 w-4" />
+                            </span>
+                            <span>Bitácora de Movimientos de Almacén Externo</span>
+                          </h4>
+                          <span className="text-[10px] font-mono text-teal-700 font-bold">
+                            Entradas, salidas y traslados cronológicos en sedes remotas y 3PL
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Filters Bar inside movements */}
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 p-3 bg-teal-50/60 border border-teal-200/90 rounded-2xl">
+                        <div>
+                          <label className="text-[9px] font-mono font-bold text-teal-900 block uppercase mb-1">Almacén Externo:</label>
+                          <select
+                            value={extWhFilter}
+                            onChange={(e) => setExtWhFilter(e.target.value)}
+                            className="w-full px-2.5 py-1.5 bg-white border border-teal-300 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-teal-500 cursor-pointer shadow-3xs"
+                          >
+                            <option value="all">📦 Todos los Almacenes ({extWarehouses.length})</option>
+                            {extWarehouses.map(wh => (
+                              <option key={wh.id} value={wh.id}>[{wh.code}] {wh.name}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="text-[9px] font-mono font-bold text-teal-900 block uppercase mb-1">Tipo de Movimiento:</label>
+                          <select
+                            value={extTypeFilter}
+                            onChange={(e) => setExtTypeFilter(e.target.value as any)}
+                            className="w-full px-2.5 py-1.5 bg-white border border-teal-300 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-teal-500 cursor-pointer shadow-3xs"
+                          >
+                            <option value="all">🔄 Todas las Operaciones</option>
+                            <option value="Entrada">📥 Solo Entradas (Inbound)</option>
+                            <option value="Salida">📤 Solo Salidas (Outbound)</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="text-[9px] font-mono font-bold text-teal-900 block uppercase mb-1">Búsqueda rápida:</label>
+                          <div className="relative">
+                            <input
+                              type="text"
+                              value={extSearchTerm}
+                              onChange={(e) => setExtSearchTerm(e.target.value)}
+                              placeholder="SKU, producto, folio, chofer..."
+                              className="w-full pl-7 pr-2.5 py-1.5 bg-white border border-teal-300 rounded-xl text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-teal-500 shadow-3xs"
+                            />
+                            <Search className="h-3.5 w-3.5 text-slate-400 absolute left-2 top-2" />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* KPIs de Movimientos */}
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                        <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-center">
+                          <span className="text-[8px] font-mono font-bold text-slate-400 block uppercase">Movimientos</span>
+                          <span className="text-base font-black font-mono text-slate-900 mt-0.5 block">{filteredExtTransactions.length}</span>
+                        </div>
+                        <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-center">
+                          <span className="text-[8px] font-mono font-bold text-emerald-700 block uppercase">Entradas</span>
+                          <span className="text-base font-black font-mono text-emerald-800 mt-0.5 block">
+                            {filteredExtTransactions.filter(t => t.type === 'Entrada').length} ({filteredExtTransactions.filter(t => t.type === 'Entrada').reduce((s, t) => s + t.qty, 0)} uds)
+                          </span>
+                        </div>
+                        <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-center">
+                          <span className="text-[8px] font-mono font-bold text-rose-700 block uppercase">Salidas</span>
+                          <span className="text-base font-black font-mono text-rose-800 mt-0.5 block">
+                            {filteredExtTransactions.filter(t => t.type === 'Salida').length} ({filteredExtTransactions.filter(t => t.type === 'Salida').reduce((s, t) => s + t.qty, 0)} uds)
+                          </span>
+                        </div>
+                        <div className="p-3 bg-teal-50 border border-teal-200 rounded-xl text-center">
+                          <span className="text-[8px] font-mono font-bold text-teal-700 block uppercase">Unidades Totales</span>
+                          <span className="text-base font-black font-mono text-teal-900 mt-0.5 block">
+                            {filteredExtTransactions.reduce((s, t) => s + t.qty, 0).toLocaleString()}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Interactive Table de Movimientos */}
+                      <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-3xs">
+                        <div className="max-h-64 overflow-y-auto">
+                          <table className="w-full text-left border-collapse text-[10px]">
+                            <thead className="bg-slate-100/90 sticky top-0 font-mono text-[9px] uppercase font-bold text-slate-600 shadow-3xs">
+                              <tr>
+                                <th className="py-2 px-3 border-b border-slate-200">Folio / Fecha</th>
+                                <th className="py-2 px-3 border-b border-slate-200">Almacén</th>
+                                <th className="py-2 px-3 border-b border-slate-200">Tipo</th>
+                                <th className="py-2 px-3 border-b border-slate-200">SKU / Producto</th>
+                                <th className="py-2 px-3 border-b border-slate-200 text-right">Cant.</th>
+                                <th className="py-2 px-3 border-b border-slate-200">Origen / Destino</th>
+                                <th className="py-2 px-3 border-b border-slate-200">Transporte</th>
+                                <th className="py-2 px-3 border-b border-slate-200">Operador</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-150">
+                              {filteredExtTransactions.length === 0 ? (
+                                <tr>
+                                  <td colSpan={8} className="text-center py-6 text-slate-400 font-medium">
+                                    No se encontraron movimientos en almacenes externos con los filtros seleccionados
+                                  </td>
+                                </tr>
+                              ) : (
+                                filteredExtTransactions.slice(0, 20).map(tx => {
+                                  const wh = extWarehouses.find(w => w.id === tx.warehouseId);
+                                  return (
+                                    <tr key={tx.id} className="hover:bg-slate-50/80 transition-colors">
+                                      <td className="py-2 px-3 font-mono">
+                                        <div className="font-bold text-slate-900">{tx.id}</div>
+                                        <div className="text-[9px] text-slate-400">{new Date(tx.timestamp).toLocaleDateString('es-ES')}</div>
+                                      </td>
+                                      <td className="py-2 px-3 font-semibold text-slate-700">
+                                        <span className="font-mono bg-slate-100 text-slate-800 px-1.5 py-0.5 rounded text-[9px]">
+                                          {wh ? wh.code : tx.warehouseId}
+                                        </span>
+                                      </td>
+                                      <td className="py-2 px-3">
+                                        <span className={`px-2 py-0.5 rounded-md text-[8px] font-black font-mono uppercase ${
+                                          tx.type === 'Entrada' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                                        }`}>
+                                          {tx.type}
+                                        </span>
+                                      </td>
+                                      <td className="py-2 px-3">
+                                        <div className="font-mono font-bold text-slate-900">{tx.sku}</div>
+                                        <div className="text-[9px] text-slate-500 truncate max-w-[140px]">{tx.productName}</div>
+                                      </td>
+                                      <td className="py-2 px-3 text-right font-mono font-black text-slate-900">
+                                        {tx.qty}
+                                      </td>
+                                      <td className="py-2 px-3 text-slate-600 truncate max-w-[130px]" title={tx.sourceOrDestination}>
+                                        {tx.sourceOrDestination}
+                                      </td>
+                                      <td className="py-2 px-3 text-slate-500 truncate max-w-[110px]" title={tx.carrierOrDelivery || ''}>
+                                        {tx.carrierOrDelivery || '—'}
+                                      </td>
+                                      <td className="py-2 px-3 text-slate-500 text-[9px]">
+                                        {tx.operator}
+                                      </td>
+                                    </tr>
+                                  );
+                                })
+                              )}
+                              {filteredExtTransactions.length > 20 && (
+                                <tr>
+                                  <td colSpan={8} className="py-2.5 px-3 text-center text-slate-400 font-mono text-[9px] bg-slate-50 font-bold">
+                                    ... y otros {filteredExtTransactions.length - 20} movimientos adicionales. Presione &quot;Imprimir Bitácora Oficial&quot; o descargue en Excel para la auditoría total.
+                                  </td>
+                                </tr>
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1735,7 +1945,7 @@ export default function ReportsCenter({
                   Vista Previa de Impresión Oficial WMS
                 </span>
                 <span className="text-[10px] text-slate-400 font-mono">
-                  {selectedReport === 'external_movements' ? 'Movimientos y Traslados de Almacén Externo' : 'Documento Oficial con Bloques de Firma'}
+                  {selectedReport === 'external_movements' ? (extReportSubView === 'inventory' ? 'Inventario Físico y Valuación en Almacenes Externos' : 'Movimientos y Traslados de Almacén Externo') : 'Documento Oficial con Bloques de Firma'}
                 </span>
               </div>
             </div>
@@ -1783,11 +1993,11 @@ export default function ReportsCenter({
                     {selectedReport === 'orders_flow' && 'REPORTE CONSOLIDADO DE PEDIDOS Y FLUJO'}
                     {selectedReport === 'warehouse_sections' && 'REPORTE DE SUPERALMACENES Y SUBALMACENES'}
                     {selectedReport === 'direct_dispatches' && 'REPORTE DE SALIDAS DIRECTAS DE ALMACÉN'}
-                    {selectedReport === 'external_movements' && 'REPORTE OFICIAL DE MOVIMIENTOS EN ALMACENES EXTERNOS'}
+                    {selectedReport === 'external_movements' && (extReportSubView === 'inventory' ? 'REPORTE OFICIAL DE INVENTARIO FÍSICO EN ALMACENES EXTERNOS' : 'REPORTE OFICIAL DE MOVIMIENTOS EN ALMACENES EXTERNOS')}
                     {selectedReport === 'full_backup' && 'REPORTE CONSOLIDADO DE RESPALDO INTEGRAL WMS'}
                   </h1>
                   <p className="text-xs font-medium text-indigo-700 mt-1 uppercase tracking-wider font-mono">
-                    {customNotes || (selectedReport === 'external_movements' ? 'Bitácora Oficial de Entradas, Salidas y Traslados en Sedes Externas' : 'Documentación Oficial Generada desde Consola Administrativa')}
+                    {customNotes || (selectedReport === 'external_movements' ? (extReportSubView === 'inventory' ? 'Catálogo de Existencias, Valuación y Niveles de Stock en Sedes Remotas' : 'Bitácora Oficial de Entradas, Salidas y Traslados en Sedes Externas') : 'Documentación Oficial Generada desde Consola Administrativa')}
                   </p>
                 </div>
 
@@ -2134,22 +2344,45 @@ export default function ReportsCenter({
                         <tr className="bg-slate-100/90 border-b border-slate-300 text-[9px] font-bold text-slate-600 uppercase tracking-wider font-mono">
                           <th className="py-2.5 px-3 border-r border-slate-300">Folio</th>
                           <th className="py-2.5 px-3 border-r border-slate-300">Fecha</th>
+                          <th className="py-2.5 px-3 border-r border-slate-300">Modalidad</th>
                           <th className="py-2.5 px-3 border-r border-slate-300">SKU</th>
                           <th className="py-2.5 px-3 border-r border-slate-300">Producto</th>
                           <th className="py-2.5 px-3 border-r border-slate-300 text-right">Cant.</th>
-                          <th className="py-2.5 px-3 border-r border-slate-300">Destino</th>
+                          <th className="py-2.5 px-3 border-r border-slate-300">Destino / Prestatario</th>
                           <th className="py-2.5 px-3">Medio / Chofer</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-200 text-[10px] font-sans">
-                        {directDispatchesList.slice(0, 20).map((disp, idx) => (
+                        {directDispatchesList.slice(0, 25).map((disp, idx) => (
                           <tr key={disp.id || idx} className="hover:bg-slate-50/20">
                             <td className="py-2 px-3 font-mono font-bold text-slate-900 border-r border-slate-200">{disp.folio || disp.id}</td>
                             <td className="py-2 px-3 border-r border-slate-200 font-mono text-slate-500">{disp.date || disp.timestamp}</td>
+                            <td className="py-2 px-3 border-r border-slate-200 font-mono">
+                              {disp.dispatchType === 'loan' ? (
+                                <span className="text-blue-800 bg-blue-50 border border-blue-200 px-1 py-0.2 rounded text-[8px] font-bold">
+                                  PRÉSTAMO
+                                </span>
+                              ) : disp.dispatchType === 'other' ? (
+                                <span className="text-purple-800 bg-purple-50 border border-purple-200 px-1 py-0.2 rounded text-[8px] font-bold">
+                                  {disp.dispatchTypeLabel || 'OTRA'}
+                                </span>
+                              ) : (
+                                <span className="text-slate-600 bg-slate-100 px-1 py-0.2 rounded text-[8px]">
+                                  DEFINITIVA
+                                </span>
+                              )}
+                            </td>
                             <td className="py-2 px-3 border-r border-slate-200 font-mono font-bold">{disp.sku}</td>
                             <td className="py-2 px-3 border-r border-slate-200 font-medium">{disp.productName || disp.name}</td>
                             <td className="py-2 px-3 border-r border-slate-200 text-right font-mono font-extrabold text-slate-900">{disp.qty || disp.quantity}</td>
-                            <td className="py-2 px-3 border-r border-slate-200 text-slate-700">{disp.destination || disp.client || 'Mostrador'}</td>
+                            <td className="py-2 px-3 border-r border-slate-200 text-slate-700">
+                              <div>{disp.destination || disp.client || 'Mostrador'}</div>
+                              {disp.borrowerName && (
+                                <div className="text-[8px] text-blue-700 font-mono font-bold">
+                                  Técnico: {disp.borrowerName}
+                                </div>
+                              )}
+                            </td>
                             <td className="py-2 px-3 text-slate-600 text-[9px]">{disp.deliveryMethod || 'Retiro'} {disp.carrier ? `(${disp.carrier})` : ''}</td>
                           </tr>
                         ))}
@@ -2159,125 +2392,260 @@ export default function ReportsCenter({
                 </div>
               )}
 
-              {/* REPORT TYPE 7: EXTERNAL WAREHOUSE MOVEMENTS (CRITICAL REQUIREMENT) */}
+              {/* REPORT TYPE 7: EXTERNAL WAREHOUSE MOVEMENTS & INVENTORY (CRITICAL REQUIREMENT) */}
               {selectedReport === 'external_movements' && (
                 <div className="space-y-6">
-                  {/* Summary row */}
-                  <div className="grid grid-cols-4 gap-3">
-                    <div className="p-3 bg-slate-50 border border-slate-300 rounded-xl print-card text-center">
-                      <span className="block text-[8px] uppercase font-bold text-slate-400 font-mono tracking-wider">Movimientos Totales</span>
-                      <span className="text-base font-black font-mono text-slate-900 mt-1 block">{filteredExtTransactions.length}</span>
-                    </div>
-                    <div className="p-3 bg-emerald-50/50 border border-emerald-300 rounded-xl print-card text-center">
-                      <span className="block text-[8px] uppercase font-bold text-emerald-700 font-mono tracking-wider">Entradas Registradas</span>
-                      <span className="text-base font-black font-mono text-emerald-800 mt-1 block">
-                        {filteredExtTransactions.filter(t => t.type === 'Entrada').length} ({filteredExtTransactions.filter(t => t.type === 'Entrada').reduce((s, t) => s + t.qty, 0)} uds)
-                      </span>
-                    </div>
-                    <div className="p-3 bg-rose-50/50 border border-rose-300 rounded-xl print-card text-center">
-                      <span className="block text-[8px] uppercase font-bold text-rose-700 font-mono tracking-wider">Salidas Registradas</span>
-                      <span className="text-base font-black font-mono text-rose-800 mt-1 block">
-                        {filteredExtTransactions.filter(t => t.type === 'Salida').length} ({filteredExtTransactions.filter(t => t.type === 'Salida').reduce((s, t) => s + t.qty, 0)} uds)
-                      </span>
-                    </div>
-                    <div className="p-3 bg-teal-50/50 border border-teal-300 rounded-xl print-card text-center">
-                      <span className="block text-[8px] uppercase font-bold text-teal-700 font-mono tracking-wider">Unidades Movilizadas</span>
-                      <span className="text-base font-black font-mono text-teal-900 mt-1 block">
-                        {filteredExtTransactions.reduce((s, t) => s + t.qty, 0).toLocaleString()}
-                      </span>
-                    </div>
-                  </div>
+                  {extReportSubView === 'inventory' ? (
+                    <>
+                      {/* Summary row para Inventario Externo */}
+                      <div className="grid grid-cols-4 gap-3">
+                        <div className="p-3 bg-slate-50 border border-slate-300 rounded-xl print-card text-center">
+                          <span className="block text-[8px] uppercase font-bold text-slate-400 font-mono tracking-wider">SKUs en Inventario</span>
+                          <span className="text-base font-black font-mono text-slate-900 mt-1 block">{filteredExtInventory.length}</span>
+                        </div>
+                        <div className="p-3 bg-teal-50/50 border border-teal-300 rounded-xl print-card text-center">
+                          <span className="block text-[8px] uppercase font-bold text-teal-700 font-mono tracking-wider">Total Unidades Físicas</span>
+                          <span className="text-base font-black font-mono text-teal-900 mt-1 block">
+                            {filteredExtInventory.reduce((s, i) => s + (i.qty || 0), 0).toLocaleString()} uds
+                          </span>
+                        </div>
+                        <div className="p-3 bg-emerald-50/50 border border-emerald-300 rounded-xl print-card text-center">
+                          <span className="block text-[8px] uppercase font-bold text-emerald-700 font-mono tracking-wider">Valuación Total</span>
+                          <span className="text-base font-black font-mono text-emerald-900 mt-1 block">
+                            {getCurrencySymbol()}{filteredExtInventory.reduce((s, i) => s + ((i.qty || 0) * convertItemCost(i.cost || 0)), 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                        <div className="p-3 bg-rose-50/50 border border-rose-300 rounded-xl print-card text-center">
+                          <span className="block text-[8px] uppercase font-bold text-rose-700 font-mono tracking-wider">Alertas Stock Mínimo</span>
+                          <span className="text-base font-black font-mono text-rose-800 mt-1 block">
+                            {filteredExtInventory.filter(i => (i.qty || 0) <= (i.minQty || 5)).length} SKUs
+                          </span>
+                        </div>
+                      </div>
 
-                  {/* Filter Metadata Subhead */}
-                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex flex-wrap justify-between items-center text-[10px] font-mono text-slate-600 gap-2">
-                    <div><strong>Almacén Consultado:</strong> {extWhFilter === 'all' ? `Todos los Almacenes Externos (${extWarehouses.length})` : (extWarehouses.find(w => w.id === extWhFilter)?.name || extWhFilter)}</div>
-                    <div><strong>Filtro de Tipo:</strong> {extTypeFilter === 'all' ? 'Entradas y Salidas' : extTypeFilter}</div>
-                    <div><strong>Criterio de Búsqueda:</strong> {extSearchTerm || 'Todos los registros'}</div>
-                  </div>
+                      {/* Filter Metadata Subhead */}
+                      <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex flex-wrap justify-between items-center text-[10px] font-mono text-slate-600 gap-2">
+                        <div><strong>Almacén Consultado:</strong> {extWhFilter === 'all' ? `Todos los Almacenes Externos (${extWarehouses.length})` : (extWarehouses.find(w => w.id === extWhFilter)?.name || extWhFilter)}</div>
+                        <div><strong>Categoría:</strong> {extCategoryFilter === 'all' ? 'Todas las Categorías' : extCategoryFilter}</div>
+                        <div><strong>Búsqueda:</strong> {extSearchTerm || 'Todos los artículos'}</div>
+                      </div>
 
-                  {/* External Movements Table */}
-                  <div className="border border-slate-300 rounded-xl overflow-hidden mt-4">
-                    <table className="w-full text-left border-collapse">
-                      <thead>
-                        <tr className="bg-slate-100/90 border-b border-slate-300 text-[9px] font-bold text-slate-600 uppercase tracking-wider font-mono">
-                          <th className="py-2.5 px-3 border-r border-slate-300">Folio Transacción</th>
-                          <th className="py-2.5 px-3 border-r border-slate-300">Fecha y Hora</th>
-                          <th className="py-2.5 px-3 border-r border-slate-300">Almacén Externo</th>
-                          <th className="py-2.5 px-3 border-r border-slate-300">Tipo</th>
-                          <th className="py-2.5 px-3 border-r border-slate-300">Código SKU</th>
-                          <th className="py-2.5 px-3 border-r border-slate-300">Descripción del Artículo</th>
-                          <th className="py-2.5 px-3 border-r border-slate-300 text-right">Cant.</th>
-                          <th className="py-2.5 px-3 border-r border-slate-300">Origen / Destino</th>
-                          <th className="py-2.5 px-3 border-r border-slate-300">Transportista / Guía</th>
-                          <th className="py-2.5 px-3">Operario</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-200 text-[10px] font-sans">
-                        {filteredExtTransactions.length === 0 ? (
-                          <tr>
-                            <td colSpan={10} className="py-6 text-center text-slate-400 font-mono">
-                              No hay registros de movimientos en almacenes externos que coincidan con los criterios de búsqueda.
-                            </td>
-                          </tr>
-                        ) : (
-                          filteredExtTransactions.map((tx) => {
-                            const wh = extWarehouses.find(w => w.id === tx.warehouseId);
-                            return (
-                              <tr key={tx.id} className="hover:bg-slate-50/20">
-                                <td className="py-2 px-3 font-mono font-bold text-slate-900 border-r border-slate-200">{tx.id}</td>
-                                <td className="py-2 px-3 border-r border-slate-200 font-mono text-slate-600">
-                                  {new Date(tx.timestamp).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' })}
+                      {/* Official Printed Inventory Table */}
+                      <div className="border border-slate-300 rounded-xl overflow-hidden mt-4">
+                        <table className="w-full text-left border-collapse">
+                          <thead>
+                            <tr className="bg-slate-100/90 border-b border-slate-300 text-[9px] font-bold text-slate-600 uppercase tracking-wider font-mono">
+                              <th className="py-2.5 px-3 border-r border-slate-300">Código SKU</th>
+                              <th className="py-2.5 px-3 border-r border-slate-300">Nombre del Producto</th>
+                              <th className="py-2.5 px-3 border-r border-slate-300">Almacén Externo</th>
+                              <th className="py-2.5 px-3 border-r border-slate-300">Ubicación</th>
+                              <th className="py-2.5 px-3 border-r border-slate-300 text-right">Stock Actual</th>
+                              <th className="py-2.5 px-3 border-r border-slate-300 text-right">Mínimo</th>
+                              <th className="py-2.5 px-3 border-r border-slate-300 text-right">Costo Unit.</th>
+                              <th className="py-2.5 px-3 border-r border-slate-300 text-right">Valuación</th>
+                              <th className="py-2.5 px-3 text-center">Estado</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-200 text-[10px] font-sans">
+                            {filteredExtInventory.length === 0 ? (
+                              <tr>
+                                <td colSpan={9} className="py-6 text-center text-slate-400 font-mono">
+                                  No hay artículos registrados en los almacenes externos consultados.
                                 </td>
-                                <td className="py-2 px-3 border-r border-slate-200 font-semibold text-slate-800">
-                                  {wh ? `[${wh.code}] ${wh.name}` : tx.warehouseId}
-                                </td>
-                                <td className="py-2 px-3 border-r border-slate-200 font-mono font-bold">
-                                  {tx.type === 'Entrada' ? (
-                                    <span className="text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded text-[8px] uppercase">ENTRADA</span>
-                                  ) : (
-                                    <span className="text-rose-700 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded text-[8px] uppercase">SALIDA</span>
-                                  )}
-                                </td>
-                                <td className="py-2 px-3 font-mono font-bold text-slate-900 border-r border-slate-200">{tx.sku}</td>
-                                <td className="py-2 px-3 border-r border-slate-200 font-medium text-slate-800">{tx.productName}</td>
-                                <td className="py-2 px-3 border-r border-slate-200 text-right font-mono font-extrabold text-slate-900">{tx.qty}</td>
-                                <td className="py-2 px-3 border-r border-slate-200 text-slate-700">{tx.sourceOrDestination}</td>
-                                <td className="py-2 px-3 border-r border-slate-200 text-slate-600 font-mono text-[9px]">{tx.carrierOrDelivery || 'No especificado'}</td>
-                                <td className="py-2 px-3 text-slate-600 text-[9px]">{tx.operator}</td>
                               </tr>
-                            );
-                          })
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
+                            ) : (
+                              filteredExtInventory.map(item => {
+                                const wh = extWarehouses.find(w => w.id === item.warehouseId);
+                                const isLow = (item.qty || 0) <= (item.minQty || 5);
+                                const unitCost = convertItemCost(item.cost || 0);
+                                const totalVal = (item.qty || 0) * unitCost;
+                                return (
+                                  <tr key={`${item.warehouseId}-${item.sku}`} className="hover:bg-slate-50/20">
+                                    <td className="py-2 px-3 font-mono font-bold text-slate-900 border-r border-slate-200">{item.sku}</td>
+                                    <td className="py-2 px-3 border-r border-slate-200 font-semibold text-slate-800">
+                                      <div>{item.name}</div>
+                                      <div className="text-[8px] text-slate-500 font-normal">{item.category}</div>
+                                    </td>
+                                    <td className="py-2 px-3 border-r border-slate-200 font-mono text-[9px] text-slate-700">
+                                      {wh ? `[${wh.code}] ${wh.name}` : item.warehouseId}
+                                    </td>
+                                    <td className="py-2 px-3 border-r border-slate-200 font-mono text-slate-600 text-[9px]">
+                                      {item.locationInWarehouse || 'General'}
+                                    </td>
+                                    <td className="py-2 px-3 border-r border-slate-200 text-right font-mono font-black text-slate-900">
+                                      {item.qty} uds
+                                    </td>
+                                    <td className="py-2 px-3 border-r border-slate-200 text-right font-mono text-slate-500">
+                                      {item.minQty || 5}
+                                    </td>
+                                    <td className="py-2 px-3 border-r border-slate-200 text-right font-mono text-slate-700">
+                                      {getCurrencySymbol()}{unitCost.toFixed(2)}
+                                    </td>
+                                    <td className="py-2 px-3 border-r border-slate-200 text-right font-mono font-extrabold text-slate-900">
+                                      {getCurrencySymbol()}{totalVal.toFixed(2)}
+                                    </td>
+                                    <td className="py-2 px-3 text-center">
+                                      <span className={`px-2 py-0.5 rounded text-[8px] font-mono font-bold uppercase ${
+                                        isLow ? 'bg-rose-100 text-rose-800 border border-rose-300' : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                      }`}>
+                                        {isLow ? 'ALERTA BAJO' : 'ÓPTIMO'}
+                                      </span>
+                                    </td>
+                                  </tr>
+                                );
+                              })
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
 
-                  {/* 3 Formal Signature Columns */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 pt-8 mt-6 border-t-2 border-slate-300">
-                    <div className="border border-slate-200 rounded-xl p-4 text-center bg-slate-50/50">
-                      <div className="h-14 border-b border-dashed border-slate-400 mb-2"></div>
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-700 block font-mono">
-                        Responsable Almacén Externo
-                      </span>
-                      <span className="text-[8px] text-slate-400 block mt-0.5">Nombre, Firma y Sello</span>
-                    </div>
+                      {/* 3 Formal Signature Columns para Inventario */}
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 pt-8 mt-6 border-t-2 border-slate-300">
+                        <div className="border border-slate-200 rounded-xl p-4 text-center bg-slate-50/50">
+                          <div className="h-14 border-b border-dashed border-slate-400 mb-2"></div>
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-700 block font-mono">
+                            Responsable Almacén Externo
+                          </span>
+                          <span className="text-[8px] text-slate-400 block mt-0.5">Nombre, Firma y Sello de la Sede</span>
+                        </div>
 
-                    <div className="border border-slate-200 rounded-xl p-4 text-center bg-slate-50/50">
-                      <div className="h-14 border-b border-dashed border-slate-400 mb-2"></div>
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-700 block font-mono">
-                        Transportista / Mensajería
-                      </span>
-                      <span className="text-[8px] text-slate-400 block mt-0.5">Firma de Conformidad de Entrega</span>
-                    </div>
+                        <div className="border border-slate-200 rounded-xl p-4 text-center bg-slate-50/50">
+                          <div className="h-14 border-b border-dashed border-slate-400 mb-2"></div>
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-700 block font-mono">
+                            Auditor / Control de Inventarios
+                          </span>
+                          <span className="text-[8px] text-slate-400 block mt-0.5">Validación de Existencias Físicas</span>
+                        </div>
 
-                    <div className="border border-slate-200 rounded-xl p-4 text-center bg-slate-50/50">
-                      <div className="h-14 border-b border-dashed border-slate-400 mb-2"></div>
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-700 block font-mono">
-                        Auditoría WMS / Control Interno
-                      </span>
-                      <span className="text-[8px] text-slate-400 block mt-0.5">Visto Bueno y Cierre de Movimiento</span>
-                    </div>
-                  </div>
+                        <div className="border border-slate-200 rounded-xl p-4 text-center bg-slate-50/50">
+                          <div className="h-14 border-b border-dashed border-slate-400 mb-2"></div>
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-700 block font-mono">
+                            Dirección de Operaciones & Logística
+                          </span>
+                          <span className="text-[8px] text-slate-400 block mt-0.5">Visto Bueno y Aprobación Central</span>
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      {/* Summary row para Movimientos */}
+                      <div className="grid grid-cols-4 gap-3">
+                        <div className="p-3 bg-slate-50 border border-slate-300 rounded-xl print-card text-center">
+                          <span className="block text-[8px] uppercase font-bold text-slate-400 font-mono tracking-wider">Movimientos Totales</span>
+                          <span className="text-base font-black font-mono text-slate-900 mt-1 block">{filteredExtTransactions.length}</span>
+                        </div>
+                        <div className="p-3 bg-emerald-50/50 border border-emerald-300 rounded-xl print-card text-center">
+                          <span className="block text-[8px] uppercase font-bold text-emerald-700 font-mono tracking-wider">Entradas Registradas</span>
+                          <span className="text-base font-black font-mono text-emerald-800 mt-1 block">
+                            {filteredExtTransactions.filter(t => t.type === 'Entrada').length} ({filteredExtTransactions.filter(t => t.type === 'Entrada').reduce((s, t) => s + t.qty, 0)} uds)
+                          </span>
+                        </div>
+                        <div className="p-3 bg-rose-50/50 border border-rose-300 rounded-xl print-card text-center">
+                          <span className="block text-[8px] uppercase font-bold text-rose-700 font-mono tracking-wider">Salidas Registradas</span>
+                          <span className="text-base font-black font-mono text-rose-800 mt-1 block">
+                            {filteredExtTransactions.filter(t => t.type === 'Salida').length} ({filteredExtTransactions.filter(t => t.type === 'Salida').reduce((s, t) => s + t.qty, 0)} uds)
+                          </span>
+                        </div>
+                        <div className="p-3 bg-teal-50/50 border border-teal-300 rounded-xl print-card text-center">
+                          <span className="block text-[8px] uppercase font-bold text-teal-700 font-mono tracking-wider">Unidades Movilizadas</span>
+                          <span className="text-base font-black font-mono text-teal-900 mt-1 block">
+                            {filteredExtTransactions.reduce((s, t) => s + t.qty, 0).toLocaleString()}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Filter Metadata Subhead */}
+                      <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex flex-wrap justify-between items-center text-[10px] font-mono text-slate-600 gap-2">
+                        <div><strong>Almacén Consultado:</strong> {extWhFilter === 'all' ? `Todos los Almacenes Externos (${extWarehouses.length})` : (extWarehouses.find(w => w.id === extWhFilter)?.name || extWhFilter)}</div>
+                        <div><strong>Filtro de Tipo:</strong> {extTypeFilter === 'all' ? 'Entradas y Salidas' : extTypeFilter}</div>
+                        <div><strong>Criterio de Búsqueda:</strong> {extSearchTerm || 'Todos los registros'}</div>
+                      </div>
+
+                      {/* External Movements Table */}
+                      <div className="border border-slate-300 rounded-xl overflow-hidden mt-4">
+                        <table className="w-full text-left border-collapse">
+                          <thead>
+                            <tr className="bg-slate-100/90 border-b border-slate-300 text-[9px] font-bold text-slate-600 uppercase tracking-wider font-mono">
+                              <th className="py-2.5 px-3 border-r border-slate-300">Folio Transacción</th>
+                              <th className="py-2.5 px-3 border-r border-slate-300">Fecha y Hora</th>
+                              <th className="py-2.5 px-3 border-r border-slate-300">Almacén Externo</th>
+                              <th className="py-2.5 px-3 border-r border-slate-300">Tipo</th>
+                              <th className="py-2.5 px-3 border-r border-slate-300">Código SKU</th>
+                              <th className="py-2.5 px-3 border-r border-slate-300">Descripción del Artículo</th>
+                              <th className="py-2.5 px-3 border-r border-slate-300 text-right">Cant.</th>
+                              <th className="py-2.5 px-3 border-r border-slate-300">Origen / Destino</th>
+                              <th className="py-2.5 px-3 border-r border-slate-300">Transportista / Guía</th>
+                              <th className="py-2.5 px-3">Operario</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-200 text-[10px] font-sans">
+                            {filteredExtTransactions.length === 0 ? (
+                              <tr>
+                                <td colSpan={10} className="py-6 text-center text-slate-400 font-mono">
+                                  No hay registros de movimientos en almacenes externos que coincidan con los criterios de búsqueda.
+                                </td>
+                              </tr>
+                            ) : (
+                              filteredExtTransactions.map((tx) => {
+                                const wh = extWarehouses.find(w => w.id === tx.warehouseId);
+                                return (
+                                  <tr key={tx.id} className="hover:bg-slate-50/20">
+                                    <td className="py-2 px-3 font-mono font-bold text-slate-900 border-r border-slate-200">{tx.id}</td>
+                                    <td className="py-2 px-3 border-r border-slate-200 font-mono text-slate-600">
+                                      {new Date(tx.timestamp).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' })}
+                                    </td>
+                                    <td className="py-2 px-3 border-r border-slate-200 font-semibold text-slate-800">
+                                      {wh ? `[${wh.code}] ${wh.name}` : tx.warehouseId}
+                                    </td>
+                                    <td className="py-2 px-3 border-r border-slate-200 font-mono font-bold">
+                                      {tx.type === 'Entrada' ? (
+                                        <span className="text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded text-[8px] uppercase">ENTRADA</span>
+                                      ) : (
+                                        <span className="text-rose-700 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded text-[8px] uppercase">SALIDA</span>
+                                      )}
+                                    </td>
+                                    <td className="py-2 px-3 font-mono font-bold text-slate-900 border-r border-slate-200">{tx.sku}</td>
+                                    <td className="py-2 px-3 border-r border-slate-200 font-medium text-slate-800">{tx.productName}</td>
+                                    <td className="py-2 px-3 border-r border-slate-200 text-right font-mono font-extrabold text-slate-900">{tx.qty}</td>
+                                    <td className="py-2 px-3 border-r border-slate-200 text-slate-700">{tx.sourceOrDestination}</td>
+                                    <td className="py-2 px-3 border-r border-slate-200 text-slate-600 font-mono text-[9px]">{tx.carrierOrDelivery || 'No especificado'}</td>
+                                    <td className="py-2 px-3 text-slate-600 text-[9px]">{tx.operator}</td>
+                                  </tr>
+                                );
+                              })
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {/* 3 Formal Signature Columns */}
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 pt-8 mt-6 border-t-2 border-slate-300">
+                        <div className="border border-slate-200 rounded-xl p-4 text-center bg-slate-50/50">
+                          <div className="h-14 border-b border-dashed border-slate-400 mb-2"></div>
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-700 block font-mono">
+                            Responsable Almacén Externo
+                          </span>
+                          <span className="text-[8px] text-slate-400 block mt-0.5">Nombre, Firma y Sello</span>
+                        </div>
+
+                        <div className="border border-slate-200 rounded-xl p-4 text-center bg-slate-50/50">
+                          <div className="h-14 border-b border-dashed border-slate-400 mb-2"></div>
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-700 block font-mono">
+                            Transportista / Mensajería
+                          </span>
+                          <span className="text-[8px] text-slate-400 block mt-0.5">Firma de Conformidad de Entrega</span>
+                        </div>
+
+                        <div className="border border-slate-200 rounded-xl p-4 text-center bg-slate-50/50">
+                          <div className="h-14 border-b border-dashed border-slate-400 mb-2"></div>
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-700 block font-mono">
+                            Auditoría WMS / Control Interno
+                          </span>
+                          <span className="text-[8px] text-slate-400 block mt-0.5">Visto Bueno y Cierre de Movimiento</span>
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
             </div>

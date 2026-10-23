@@ -192,3 +192,19 @@ export interface ExternalTransaction {
   timestamp: string;
 }
 
+export interface BorrowerPersonnel {
+  id: string;
+  name: string;
+  role: string;
+  department: string;
+  phone?: string;
+  employeeNumber?: string;
+  company?: string;
+  status: 'active' | 'inactive';
+  notes?: string;
+  source?: 'crew' | 'database' | 'manual';
+  createdAt: string;
+  updatedAt?: string;
+}
+
+

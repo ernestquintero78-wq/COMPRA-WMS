@@ -22,6 +22,7 @@ import { CycleCountReportModal } from './components/CycleCountReportModal';
 import { PlatformSettings, DEFAULT_THEME_VALUES } from './components/PlatformSettings';
 import { ConfigurationHub } from './components/ConfigurationHub';
 import { ExternalWarehouseManager } from './components/ExternalWarehouseManager';
+import { PersonnelManager } from './components/PersonnelManager';
 import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts';
 import {
   Boxes,
@@ -64,7 +65,8 @@ import {
   Settings,
   Building2,
   Shield,
-  Palette
+  Palette,
+  Users
 } from 'lucide-react';
 
 export default function App() {
@@ -497,17 +499,28 @@ export default function App() {
 
   const handleConcludeAuditSession = async (report?: ConcludedAuditReport) => {
     const folio = report?.folio || `AUD-CC-${new Date().getFullYear()}`;
-    setStatusMsg(`Auditoría de conteo cíclico concluida con éxito (Folio: ${folio}). Acta archivada y lista para firma.`);
+    const opName = report?.responsible || (activeOperator ? `${activeOperator.name} (${activeOperator.role})` : (user?.displayName || 'Logistics Admin'));
+
+    // Automatically reconcile discrepant items if present in report
+    if (report && Array.isArray((report as any).items)) {
+      const discrepantItems = (report as any).items.filter((i: any) => i.deviation !== 0);
+      for (const discItem of discrepantItems) {
+        await handleReconcileInventory(discItem.sku, discItem.physical, opName);
+      }
+    }
+
+    setStatusMsg(`Auditoría de conteo cíclico concluida (Folio: ${folio}). Inventario del sistema reconciliado al conteo físico.`);
     setTimeout(() => setStatusMsg(''), 6000);
     try {
       await appendActivityLog(
-        activeOperator ? `${activeOperator.name} (${activeOperator.role})` : (user?.displayName || 'Logistics Admin'),
+        opName,
         'Concluir Auditoría y Conteo Cíclico',
-        `Folio: ${folio}. Responsable: ${report?.responsible || activeOperator?.name || 'Alex Mercer'}, Fecha: ${report?.date || new Date().toLocaleDateString()}. SKUs: ${report?.totalItems || activeSessionSkus.length}, Exactitud: ${report?.accuracyRate || 100}%, Desvío neto: ${report?.netDeviation || 0} uds.`
+        `Folio: ${folio}. Responsable: ${opName}, Fecha: ${report?.date || new Date().toLocaleDateString()}. SKUs: ${report?.totalItems || activeSessionSkus.length}, Exactitud: ${report?.accuracyRate || 100}%, Desvío neto: ${report?.netDeviation || 0} uds. Stock conciliado en todos los módulos.`
       );
     } catch (e) {
       console.error('Error logging audit completion', e);
     }
+    await loadWarehouseData();
   };
 
   // Add order callback
@@ -628,6 +641,10 @@ export default function App() {
     deliveryMethod: string;
     trackingNumber?: string;
     notes?: string;
+    dispatchType?: 'loan' | 'definitive' | 'other';
+    dispatchTypeLabel?: string;
+    borrowerName?: string;
+    expectedReturnDate?: string;
   }): Promise<{ orderId: string; deductedBins: string[] } | null> => {
     const item = inventory.find(i => i.sku === dispatchData.sku);
     if (!item) return null;
@@ -680,15 +697,274 @@ export default function App() {
     setInventory(updatedInventory);
 
     await syncAllToGoogleSheetNow(updatedBins, updatedInventory, updatedOrders);
+    
+    const typeLabel = dispatchData.dispatchType === 'loan'
+      ? `[PRÉSTAMO a: ${dispatchData.borrowerName || 'Personal'}]`
+      : dispatchData.dispatchType === 'other'
+      ? `[OTRA MODALIDAD: ${dispatchData.dispatchTypeLabel || 'Personalizada'}]`
+      : `[SALIDA DEFINITIVA]`;
+
     await appendActivityLog(
       activeOperator ? `${activeOperator.name} (${activeOperator.role})` : (user?.displayName || 'Logistics Admin'),
-      'Salida Directa de Almacén',
-      `Salida de almacén de ${dispatchData.qty} uds de ${item.name} (${dispatchData.sku}) hacia "${dispatchData.destination}" vía "${dispatchData.deliveryMethod}". Celdas afectadas: ${deductedBins.join(', ') || 'Inventario General'}`
+      dispatchData.dispatchType === 'loan' ? 'Préstamo de Herramienta/Equipo' : 'Salida Directa de Almacén',
+      `${typeLabel} Salida de ${dispatchData.qty} uds de ${item.name} (${dispatchData.sku}) hacia "${dispatchData.destination}" vía "${dispatchData.deliveryMethod}". Celdas afectadas: ${deductedBins.join(', ') || 'Inventario General'}`
     );
+
+    // Cross-module broadcasts
+    window.dispatchEvent(new CustomEvent('wms_direct_dispatches_updated'));
+    window.dispatchEvent(new CustomEvent('owms_dispatch_updated'));
+    window.dispatchEvent(new CustomEvent('wms_inventory_updated'));
+    window.dispatchEvent(new CustomEvent('owms_borrowers_updated'));
+    window.dispatchEvent(new Event('storage'));
 
     await loadWarehouseData();
 
     return { orderId, deductedBins };
+  };
+
+  // Handle Return of Loaned Tools & Equipment (Reintegración inmediata a inventario y celdas)
+  const handleReturnLoan = async (
+    recordId: string,
+    sku: string,
+    qty: number,
+    targetBinId?: string,
+    returnOperator?: string
+  ): Promise<boolean> => {
+    try {
+      const opName = returnOperator || (activeOperator ? activeOperator.name : (user?.displayName || 'Operador WMS'));
+      const item = inventory.find(i => i.sku === sku);
+      const itemName = item ? item.name : sku;
+
+      // 1. Update localStorage OWMS_DIRECT_DISPATCH_HISTORY
+      try {
+        const saved = localStorage.getItem('OWMS_DIRECT_DISPATCH_HISTORY');
+        if (saved) {
+          const list = JSON.parse(saved);
+          const updated = list.map((rec: any) => {
+            if (rec.id === recordId) {
+              return {
+                ...rec,
+                loanStatus: 'returned',
+                returnTimestamp: new Date().toISOString(),
+                returnOperator: opName
+              };
+            }
+            return rec;
+          });
+          localStorage.setItem('OWMS_DIRECT_DISPATCH_HISTORY', JSON.stringify(updated));
+        }
+      } catch (e) {
+        console.error('Error updating dispatch history:', e);
+      }
+
+      // 2. Restore stock in inventory
+      const updatedInventory = inventory.map(i => {
+        if (i.sku === sku) {
+          return { ...i, qty: i.qty + qty };
+        }
+        return i;
+      });
+
+      // 3. Restore stock in physical bins
+      const updatedBins = bins.map(b => ({ ...b }));
+      let assignedBinId = targetBinId;
+
+      if (!assignedBinId) {
+        const existingBin = updatedBins.find(b => b.occupiedSku === sku);
+        if (existingBin) {
+          assignedBinId = existingBin.id;
+        } else {
+          const emptyBin = updatedBins.find(b => b.status === 'Empty' || !b.occupiedSku);
+          if (emptyBin) {
+            assignedBinId = emptyBin.id;
+          }
+        }
+      }
+
+      if (assignedBinId) {
+        const binIndex = updatedBins.findIndex(b => b.id === assignedBinId);
+        if (binIndex !== -1) {
+          const bin = updatedBins[binIndex];
+          bin.occupiedSku = sku;
+          bin.occupiedQty = (bin.occupiedQty || 0) + qty;
+          bin.status = bin.occupiedQty >= 100 ? 'Full' : 'Partial';
+        }
+      }
+
+      setInventory(updatedInventory);
+      setBins(updatedBins);
+
+      await syncAllToGoogleSheetNow(updatedBins, updatedInventory, orders);
+      await appendActivityLog(
+        opName,
+        'Devolución de Herramienta / Reintegro a Stock',
+        `Reingresadas ${qty} uds de SKU ${sku} (${itemName}) al almacén. Celda de resguardo asignada: ${assignedBinId || 'Almacén Central'}. Folio: ${recordId}.`
+      );
+
+      // Trigger custom events so all tabs and components react immediately
+      window.dispatchEvent(new CustomEvent('wms_inventory_updated'));
+      window.dispatchEvent(new CustomEvent('owms_dispatch_updated'));
+      window.dispatchEvent(new CustomEvent('wms_direct_dispatches_updated'));
+      window.dispatchEvent(new CustomEvent('owms_borrowers_updated'));
+      window.dispatchEvent(new Event('storage'));
+
+      await loadWarehouseData();
+
+      setStatusMsg(`¡Devolución exitosa! Se reintegraron ${qty} uds de "${itemName}" al inventario y celda ${assignedBinId || 'activa'}.`);
+      setTimeout(() => setStatusMsg(''), 4500);
+
+      return true;
+    } catch (err: any) {
+      console.error('Error in handleReturnLoan:', err);
+      setStatusMsg(`Error al procesar la devolución: ${err.message}`);
+      return false;
+    }
+  };
+
+  // Reconcile Inventory Count (Ajustar existencias físicas en sistema tras auditoría)
+  const handleReconcileInventory = async (
+    sku: string,
+    physicalQty: number,
+    responsibleOperator?: string
+  ): Promise<boolean> => {
+    try {
+      const opName = responsibleOperator || (activeOperator ? activeOperator.name : (user?.displayName || 'Auditor WMS'));
+      const item = inventory.find(i => i.sku === sku);
+      if (!item) return false;
+
+      const oldQty = item.qty;
+      const deviation = physicalQty - oldQty;
+
+      // Update inventory stock
+      const updatedInventory = inventory.map(i => {
+        if (i.sku === sku) {
+          return { ...i, qty: physicalQty };
+        }
+        return i;
+      });
+
+      // Update bins proportionally or adjust primary bin
+      const updatedBins = bins.map(b => ({ ...b }));
+      const matchingBins = updatedBins.filter(b => b.occupiedSku === sku);
+
+      if (matchingBins.length > 0) {
+        if (deviation < 0) {
+          let toDeduct = Math.abs(deviation);
+          for (const b of matchingBins) {
+            if (toDeduct <= 0) break;
+            const deduct = Math.min(toDeduct, b.occupiedQty);
+            b.occupiedQty -= deduct;
+            toDeduct -= deduct;
+            if (b.occupiedQty <= 0) {
+              b.occupiedSku = '';
+              b.status = 'Empty';
+            } else {
+              b.status = 'Partial';
+            }
+          }
+        } else if (deviation > 0) {
+          matchingBins[0].occupiedQty += deviation;
+          matchingBins[0].status = matchingBins[0].occupiedQty >= 100 ? 'Full' : 'Partial';
+        }
+      } else if (physicalQty > 0) {
+        const emptyBin = updatedBins.find(b => b.status === 'Empty' || !b.occupiedSku);
+        if (emptyBin) {
+          emptyBin.occupiedSku = sku;
+          emptyBin.occupiedQty = physicalQty;
+          emptyBin.status = physicalQty >= 100 ? 'Full' : 'Partial';
+        }
+      }
+
+      setInventory(updatedInventory);
+      setBins(updatedBins);
+
+      await syncAllToGoogleSheetNow(updatedBins, updatedInventory, orders);
+      await appendActivityLog(
+        opName,
+        'Reconciliación de Stock Cíclico',
+        `Ajuste de inventario físico SKU ${sku} (${item.name}): de ${oldQty} a ${physicalQty} unidades (desvío: ${deviation > 0 ? '+' : ''}${deviation} uds).`
+      );
+
+      window.dispatchEvent(new CustomEvent('wms_inventory_updated'));
+      window.dispatchEvent(new CustomEvent('owms_dispatch_updated'));
+      window.dispatchEvent(new Event('storage'));
+
+      await loadWarehouseData();
+      return true;
+    } catch (err: any) {
+      console.error('Error reconciling inventory:', err);
+      return false;
+    }
+  };
+
+  // Central <-> External Warehouse Transfer synchronization
+  const handleCentralExternalTransfer = async (transferData: {
+    type: 'to_external' | 'from_external';
+    sku: string;
+    qty: number;
+    warehouseName: string;
+    referenceDoc?: string;
+  }) => {
+    const item = inventory.find(i => i.sku === transferData.sku);
+    if (!item) return;
+
+    const updatedInventory = inventory.map(i => ({ ...i }));
+    const updatedBins = bins.map(b => ({ ...b }));
+    const invIdx = updatedInventory.findIndex(i => i.sku === transferData.sku);
+
+    if (transferData.type === 'to_external') {
+      // Deduct from Central
+      if (invIdx !== -1) {
+        updatedInventory[invIdx].qty = Math.max(0, updatedInventory[invIdx].qty - transferData.qty);
+      }
+      let pending = transferData.qty;
+      const binsWithSku = updatedBins.filter(b => b.occupiedSku === transferData.sku && b.occupiedQty > 0);
+      for (const b of binsWithSku) {
+        if (pending <= 0) break;
+        const deduct = Math.min(pending, b.occupiedQty);
+        b.occupiedQty -= deduct;
+        pending -= deduct;
+        if (b.occupiedQty <= 0) {
+          b.occupiedSku = '';
+          b.status = 'Empty';
+        } else {
+          b.status = 'Partial';
+        }
+      }
+
+      await appendActivityLog(
+        activeOperator ? `${activeOperator.name} (${activeOperator.role})` : (user?.displayName || 'Operador Central'),
+        'Traspaso a Almacén Externo',
+        `Salida de ${transferData.qty} uds de ${item.name} (${item.sku}) transferidas hacia "${transferData.warehouseName}". Doc: ${transferData.referenceDoc || 'N/A'}.`
+      );
+    } else {
+      // Received from External to Central
+      if (invIdx !== -1) {
+        updatedInventory[invIdx].qty += transferData.qty;
+      }
+      const targetBin = updatedBins.find(b => b.occupiedSku === transferData.sku) || updatedBins.find(b => b.status === 'Empty' || !b.occupiedSku);
+      if (targetBin) {
+        targetBin.occupiedSku = transferData.sku;
+        targetBin.occupiedQty = (targetBin.occupiedQty || 0) + transferData.qty;
+        targetBin.status = targetBin.occupiedQty >= 100 ? 'Full' : 'Partial';
+      }
+
+      await appendActivityLog(
+        activeOperator ? `${activeOperator.name} (${activeOperator.role})` : (user?.displayName || 'Operador Central'),
+        'Recepción desde Almacén Externo',
+        `Ingreso de ${transferData.qty} uds de ${item.name} (${item.sku}) recibidas desde "${transferData.warehouseName}". Doc: ${transferData.referenceDoc || 'N/A'}.`
+      );
+    }
+
+    setInventory(updatedInventory);
+    setBins(updatedBins);
+    await syncAllToGoogleSheetNow(updatedBins, updatedInventory, orders);
+
+    window.dispatchEvent(new CustomEvent('wms_inventory_updated'));
+    window.dispatchEvent(new CustomEvent('owms_dispatch_updated'));
+    window.dispatchEvent(new Event('storage'));
+
+    await loadWarehouseData();
   };
 
   // Calculate real-time active system alerts
@@ -932,44 +1208,73 @@ export default function App() {
     return alerts;
   };
 
-  // Add SKU index card
+  // Add SKU index card with automatic bin assignment
   const handleAddInventory = async (item: InventoryItem) => {
-    // Put newly registered SKU at the top as the first option
     const updatedInventory = [item, ...inventory.filter(i => i.sku.toUpperCase() !== item.sku.toUpperCase())];
+    
+    // If the new item has stock > 0, allocate to an available empty bin so it reflects on map
+    const updatedBins = bins.map(b => ({ ...b }));
+    if ((item.qty || 0) > 0) {
+      const existingBin = updatedBins.find(b => b.occupiedSku === item.sku);
+      if (!existingBin) {
+        const emptyBin = updatedBins.find(b => b.status === 'Empty' || !b.occupiedSku);
+        if (emptyBin) {
+          emptyBin.occupiedSku = item.sku;
+          emptyBin.occupiedQty = item.qty;
+          emptyBin.status = item.qty >= 100 ? 'Full' : 'Partial';
+        }
+      }
+    }
+
+    setBins(updatedBins);
     setInventory(updatedInventory);
 
-    // Save as last registered SKU so it remains first in tables, selectors and forms
     localStorage.setItem('wms_last_registered_sku', item.sku);
 
-    await syncAllToGoogleSheetNow(bins, updatedInventory, orders);
+    await syncAllToGoogleSheetNow(updatedBins, updatedInventory, orders);
     await appendActivityLog(
       user?.displayName || 'Logistics Admin',
       'Register Storage SKU',
-      `Registered standard SKU code: ${item.sku} (${item.name}) supplier: ${item.supplier}`
+      `Registrado nuevo SKU: ${item.sku} (${item.name}) - Stock inicial: ${item.qty || 0} uds.`
     );
+
+    window.dispatchEvent(new CustomEvent('wms_inventory_updated'));
+    window.dispatchEvent(new Event('storage'));
 
     await loadWarehouseData();
   };
 
-  // Delete SKU index card
+  // Delete SKU index card and clear corresponding bins
   const handleDeleteInventory = async (sku: string) => {
     const updatedInventory = inventory.filter(i => i.sku !== sku);
+    const updatedBins = bins.map(b => {
+      if (b.occupiedSku === sku) {
+        return { ...b, occupiedSku: '', occupiedQty: 0, status: 'Empty' as const };
+      }
+      return b;
+    });
+
+    setBins(updatedBins);
     setInventory(updatedInventory);
 
-    await syncAllToGoogleSheetNow(bins, updatedInventory, orders);
+    await syncAllToGoogleSheetNow(updatedBins, updatedInventory, orders);
     await appendActivityLog(
       user?.displayName || 'Logistics Admin',
       'Delete Registered SKU Index',
-      `Permanently removed stock product SKU registration code: ${sku}`
+      `Eliminado permanentemente el SKU: ${sku}. Celdas físicas liberadas.`
     );
+
+    window.dispatchEvent(new CustomEvent('wms_inventory_updated'));
+    window.dispatchEvent(new Event('storage'));
 
     await loadWarehouseData();
   };
 
-  // Update inventory qty callback
+  // Update inventory qty and synchronize physical storage bins
   const handleUpdateInventoryQty = async (sku: string, newQty: number) => {
     const oldItem = inventory.find(i => i.sku === sku);
     const oldQty = oldItem ? oldItem.qty : 0;
+    const diff = newQty - oldQty;
 
     const updatedInventory = inventory.map(item => {
       if (item.sku === sku) {
@@ -977,14 +1282,50 @@ export default function App() {
       }
       return item;
     });
+
+    // Also synchronize bins so map, dashboard & slotting reflect newQty immediately
+    const updatedBins = bins.map(b => ({ ...b }));
+    const skuBins = updatedBins.filter(b => b.occupiedSku === sku);
+    if (skuBins.length > 0) {
+      if (diff > 0) {
+        skuBins[0].occupiedQty += diff;
+        skuBins[0].status = skuBins[0].occupiedQty >= 100 ? 'Full' : 'Partial';
+      } else if (diff < 0) {
+        let toRemove = Math.abs(diff);
+        for (const b of skuBins) {
+          if (toRemove <= 0) break;
+          const amt = Math.min(toRemove, b.occupiedQty);
+          b.occupiedQty -= amt;
+          toRemove -= amt;
+          if (b.occupiedQty <= 0) {
+            b.occupiedSku = '';
+            b.status = 'Empty';
+          } else {
+            b.status = 'Partial';
+          }
+        }
+      }
+    } else if (newQty > 0) {
+      const emptyBin = updatedBins.find(b => b.status === 'Empty' || !b.occupiedSku);
+      if (emptyBin) {
+        emptyBin.occupiedSku = sku;
+        emptyBin.occupiedQty = newQty;
+        emptyBin.status = newQty >= 100 ? 'Full' : 'Partial';
+      }
+    }
+
+    setBins(updatedBins);
     setInventory(updatedInventory);
 
-    await syncAllToGoogleSheetNow(bins, updatedInventory, orders);
+    await syncAllToGoogleSheetNow(updatedBins, updatedInventory, orders);
     await appendActivityLog(
       user?.displayName || 'Logistics Admin',
       'Adjust Inventory Stock',
-      `Manually adjusted stock level of SKU ${sku} from ${oldQty} to ${newQty} units.`
+      `Ajuste de existencias SKU ${sku} de ${oldQty} a ${newQty} unidades. Celdas de almacén sincronizadas.`
     );
+
+    window.dispatchEvent(new CustomEvent('wms_inventory_updated'));
+    window.dispatchEvent(new Event('storage'));
 
     await loadWarehouseData();
   };
@@ -1240,7 +1581,7 @@ export default function App() {
                   {[
                     { id: 'entradas', label: 'Entradas', icon: ArrowDownLeft },
                     { id: 'salidas', label: 'Salidas', icon: ArrowUpRight },
-                    { id: 'movimientos', label: 'Movimientos', icon: Move },
+                    { id: 'movimientos', label: 'Bitácora de Movimientos', icon: NotebookText },
                     { id: 'conteos', label: 'Conteos Cíclicos', icon: ClipboardCheck },
                     { id: 'almacen-externo', label: 'Almacén Externo', icon: Building2 },
                   ].map((tab) => {
@@ -1279,6 +1620,7 @@ export default function App() {
                     { id: 'dashboard', label: 'Métricas', icon: TrendingUp },
                     { id: 'map', label: 'Mapa del Almacén', icon: MapPin },
                     { id: 'inventory', label: 'Registro de SKU', icon: Package },
+                    { id: 'personal', label: 'Personal', icon: Users },
                     { id: 'etiquetas', label: 'Estación de Etiquetas', icon: Printer },
                     { id: 'alertas', label: 'Gestión de Alertas', icon: ShieldAlert },
                     { id: 'reports', label: 'Centro de Reportes', icon: FileDown },
@@ -1359,7 +1701,7 @@ export default function App() {
                 <span className="text-slate-300 font-light">|</span>
                 <span className="text-slate-500 font-medium">Sección activa:</span>
                 <span className="font-bold text-slate-800 capitalize font-mono">
-                  {activeTab === 'configuracion' || activeTab === 'crew' || activeTab === 'manual' ? 'Configuración' : activeTab === 'almacen-externo' ? 'Almacén Externo' : activeTab}
+                  {activeTab === 'configuracion' || activeTab === 'crew' || activeTab === 'manual' ? 'Configuración' : activeTab === 'almacen-externo' ? 'Almacén Externo' : activeTab === 'personal' ? 'Personal (Prestatarios)' : activeTab === 'movimientos' ? 'Bitácora de Movimientos' : activeTab}
                 </span>
               </div>
               <span className="text-[10px] text-slate-400 hidden sm:inline font-mono">
@@ -2069,6 +2411,7 @@ export default function App() {
             <MovementsManager
               bins={bins}
               inventory={inventory}
+              orders={orders}
               logs={logs}
               onUpdateBins={handleUpdateBins}
               activeOperatorName={activeOperator ? `${activeOperator.name} (${activeOperator.role})` : 'Administrador de Logística'}
@@ -2125,6 +2468,14 @@ export default function App() {
             <AlertsManager
               inventory={inventory}
               bins={bins}
+            />
+          )}
+
+          {activeTab === 'personal' && (
+            <PersonnelManager
+              onNavigateToTab={setActiveTab}
+              activeOperator={activeOperator}
+              platformTheme={platformTheme}
             />
           )}
 

@@ -115,6 +115,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const [dashboardSubTab, setDashboardSubTab] = useState<'metrics' | 'config'>('metrics');
   const [executivePerspective, setExecutivePerspective] = useState<'resumen' | 'operaciones' | 'almacen' | 'procesos' | 'capital' | 'soporte' | 'todo'>('resumen');
   const [showFiltersBar, setShowFiltersBar] = useState<boolean>(true);
+  const [showExecutiveCockpitCard, setShowExecutiveCockpitCard] = useState<boolean>(false);
 
   // Currency Converter States
   const [currencyMode, setCurrencyMode] = useState<'original' | 'mxn_to_usd'>('original');
@@ -2393,6 +2394,22 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 </div>
               )}
             </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowExecutiveCockpitCard(!showExecutiveCockpitCard)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 border ${
+                  showExecutiveCockpitCard
+                    ? 'bg-slate-900 text-white border-slate-800 shadow-xs'
+                    : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border-slate-200'
+                }`}
+                title="Mostrar u ocultar la tarjeta del Tablero Ejecutivo"
+              >
+                <LayoutDashboard className="h-3.5 w-3.5 text-indigo-500" />
+                <span>{showExecutiveCockpitCard ? 'Ocultar Cabecera Ejecutiva' : 'Mostrar Cabecera Ejecutiva'}</span>
+              </button>
+            </div>
           </div>
 
           {/* Configuración de Divisa y Conversión en Tiempo Real - no-print */}
@@ -2516,130 +2533,122 @@ export const Dashboard: React.FC<DashboardProps> = ({
           {/* ======================================================== */}
           {/* 1. CENTRO DE COMANDO EJECUTIVO WMS (EXECUTIVE COCKPIT)    */}
           {/* ======================================================== */}
-          <div className="bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 text-white rounded-3xl p-6 sm:p-7 border border-slate-800 shadow-xl relative overflow-hidden animate-fadeIn no-print" id="executive-command-cockpit">
-            {/* Subtle background glow */}
-            <div className="absolute top-0 right-0 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none -mr-20 -mt-20" />
-            <div className="absolute bottom-0 left-1/3 w-80 h-80 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
+          {showExecutiveCockpitCard && (
+            <div className="bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 text-white rounded-3xl p-6 sm:p-7 border border-slate-800 shadow-xl relative overflow-hidden animate-fadeIn no-print" id="executive-command-cockpit">
+              {/* Subtle background glow */}
+              <div className="absolute top-0 right-0 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none -mr-20 -mt-20" />
+              <div className="absolute bottom-0 left-1/3 w-80 h-80 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
 
-            <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6 pb-6 border-b border-slate-800/80">
-              <div className="space-y-2">
-                <div className="flex flex-wrap items-center gap-2.5">
-                  <span className="px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-mono flex items-center gap-1.5">
-                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    WMS Executive Cockpit · En Vivo
-                  </span>
-                  <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-blue-500/10 text-blue-300 border border-blue-500/20 font-mono">
-                    {bins.length} Celdas Conectadas
-                  </span>
-                  <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 font-mono">
-                    Supabase PostgreSQL Sync
-                  </span>
+              <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6 pb-6 border-b border-slate-800/80">
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <span className="px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-mono flex items-center gap-1.5">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      WMS Executive Cockpit · En Vivo
+                    </span>
+                    <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-blue-500/10 text-blue-300 border border-blue-500/20 font-mono">
+                      {bins.length} Celdas Conectadas
+                    </span>
+                    <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 font-mono">
+                      Supabase PostgreSQL Sync
+                    </span>
+                  </div>
+                  <h2 className="text-xl sm:text-2xl font-black tracking-tight text-white flex items-center gap-2.5">
+                    <LayoutDashboard className="h-6 w-6 text-indigo-400" />
+                    <span>Tablero Ejecutivo de Rendimiento & Capacidad</span>
+                  </h2>
+                  <p className="text-xs text-slate-300 max-w-2xl font-normal leading-relaxed">
+                    Visión ejecutiva centralizada de operaciones. Integra en tiempo real la <strong>infraestructura física del Mapa de Almacén</strong>, valorización de inventario, flujo de salidas de almacén y confiabilidad de auditoría.
+                  </p>
                 </div>
-                <h2 className="text-xl sm:text-2xl font-black tracking-tight text-white flex items-center gap-2.5">
-                  <LayoutDashboard className="h-6 w-6 text-indigo-400" />
-                  <span>Tablero Ejecutivo de Rendimiento & Capacidad</span>
-                </h2>
-                <p className="text-xs text-slate-300 max-w-2xl font-normal leading-relaxed">
-                  Visión ejecutiva centralizada de operaciones. Integra en tiempo real la <strong>infraestructura física del Mapa de Almacén</strong>, valorización de inventario, flujo de salidas de almacén y confiabilidad de auditoría.
-                </p>
-              </div>
 
-              {/* Health Score + Quick Action */}
-              <div className="flex flex-wrap items-center gap-4 shrink-0">
-                <div className="bg-slate-900/80 border border-slate-700/80 rounded-2xl p-3.5 px-4.5 flex items-center gap-3.5 backdrop-blur-sm">
-                  <div className="relative flex items-center justify-center">
-                    <div className="w-13 h-13 rounded-full border-4 border-slate-800 flex items-center justify-center">
-                      <span className="text-base font-black font-mono text-emerald-400">
-                        {operationalHealthScore}%
+                {/* Health Score + Quick Action */}
+                <div className="flex flex-wrap items-center gap-4 shrink-0">
+                  <div className="bg-slate-900/80 border border-slate-700/80 rounded-2xl p-3.5 px-4.5 flex items-center gap-3.5 backdrop-blur-sm">
+                    <div className="relative flex items-center justify-center">
+                      <div className="w-13 h-13 rounded-full border-4 border-slate-800 flex items-center justify-center">
+                        <span className="text-base font-black font-mono text-emerald-400">
+                          {operationalHealthScore}%
+                        </span>
+                      </div>
+                    </div>
+                    <div>
+                      <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider block font-mono">
+                        Salud Operativa Global
+                      </span>
+                      <span className="text-xs font-bold text-white block">
+                        {operationalHealthScore >= 90 ? 'Excelente / Alta Disponibilidad' : operationalHealthScore >= 75 ? 'Operación Estable' : 'Atención Requerida'}
+                      </span>
+                      <span className="text-[10px] text-slate-400 block font-mono">
+                        Espacio · Salidas · Auditoría
                       </span>
                     </div>
                   </div>
-                  <div>
-                    <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider block font-mono">
-                      Salud Operativa Global
-                    </span>
-                    <span className="text-xs font-bold text-white block">
-                      {operationalHealthScore >= 90 ? 'Excelente / Alta Disponibilidad' : operationalHealthScore >= 75 ? 'Operación Estable' : 'Atención Requerida'}
-                    </span>
-                    <span className="text-[10px] text-slate-400 block font-mono">
-                      Espacio · Salidas · Auditoría
-                    </span>
-                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setDashboardSubTab('config')}
+                    className="px-3.5 py-3 rounded-2xl bg-slate-800/90 hover:bg-slate-800 text-slate-300 hover:text-white font-bold text-xs transition flex items-center gap-1.5 cursor-pointer shadow-md active:scale-95 border border-slate-700/80"
+                    title="Configuración técnica y administración de celdas"
+                  >
+                    <Settings className="h-4 w-4 text-slate-400" />
+                    <span>Configuración</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowFiltersBar(!showFiltersBar)}
+                    className={`px-3 py-3 rounded-2xl font-bold text-xs transition flex items-center gap-1.5 cursor-pointer shadow-md active:scale-95 border ${
+                      showFiltersBar
+                        ? 'bg-indigo-600 text-white border-indigo-500'
+                        : 'bg-slate-800/90 hover:bg-slate-800 text-slate-300 hover:text-white border-slate-700/80'
+                    }`}
+                    title="Mostrar / Ocultar filtros de periodo y divisa"
+                  >
+                    <Sliders className="h-4 w-4 text-indigo-400" />
+                    <span>{showFiltersBar ? 'Ocultar Filtros' : 'Filtros'}</span>
+                  </button>
                 </div>
+              </div>
 
-                <button
-                  type="button"
-                  onClick={() => onTabChange('map')}
-                  className="px-4 py-3 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs transition flex items-center gap-2 cursor-pointer shadow-lg shadow-blue-900/30 active:scale-95 border border-blue-400/30"
-                  title="Abrir el mapa interactivo del almacén"
-                >
-                  <MapPin className="h-4 w-4" />
-                  <span>Mapa de Almacén ({bins.length} celdas) →</span>
-                </button>
+              {/* Selector de Perspectiva Ejecutiva (Elimina sensación de aislamiento) */}
+              <div className="relative z-10 pt-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider font-mono flex items-center gap-1.5 shrink-0">
+                  <Sliders className="h-3.5 w-3.5 text-indigo-400" />
+                  <span>Perspectiva de Análisis:</span>
+                </span>
 
-                <button
-                  type="button"
-                  onClick={() => setDashboardSubTab('config')}
-                  className="px-3.5 py-3 rounded-2xl bg-slate-800/90 hover:bg-slate-800 text-slate-300 hover:text-white font-bold text-xs transition flex items-center gap-1.5 cursor-pointer shadow-md active:scale-95 border border-slate-700/80"
-                  title="Configuración técnica y administración de celdas"
-                >
-                  <Settings className="h-4 w-4 text-slate-400" />
-                  <span>Configuración</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setShowFiltersBar(!showFiltersBar)}
-                  className={`px-3 py-3 rounded-2xl font-bold text-xs transition flex items-center gap-1.5 cursor-pointer shadow-md active:scale-95 border ${
-                    showFiltersBar
-                      ? 'bg-indigo-600 text-white border-indigo-500'
-                      : 'bg-slate-800/90 hover:bg-slate-800 text-slate-300 hover:text-white border-slate-700/80'
-                  }`}
-                  title="Mostrar / Ocultar filtros de periodo y divisa"
-                >
-                  <Sliders className="h-4 w-4 text-indigo-400" />
-                  <span>{showFiltersBar ? 'Ocultar Filtros' : 'Filtros'}</span>
-                </button>
+                <div className="flex flex-wrap items-center gap-1.5 bg-slate-950/60 p-1 rounded-xl border border-slate-800/80">
+                  {[
+                    { id: 'resumen', label: 'Resumen & Conectividad', icon: Sparkles },
+                    { id: 'operaciones', label: 'Operaciones (Flujo Completo)', icon: Activity },
+                    { id: 'almacen', label: 'Almacén & Espacio Físico', icon: Boxes },
+                    { id: 'capital', label: 'Catálogo, Etiquetas & Capital', icon: DollarSign },
+                    { id: 'soporte', label: 'Alertas, Reportes & Personal', icon: ShieldCheck },
+                    { id: 'todo', label: 'Vista Completa Integral', icon: ListFilter }
+                  ].map((tab) => {
+                    const Icon = tab.icon;
+                    const isActive = executivePerspective === tab.id;
+                    return (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => setExecutivePerspective(tab.id as any)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                          isActive
+                            ? 'bg-indigo-600 text-white shadow-xs'
+                            : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                        }`}
+                      >
+                        <Icon className="h-3.5 w-3.5" />
+                        <span>{tab.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
-
-            {/* Selector de Perspectiva Ejecutiva (Elimina sensación de aislamiento) */}
-            <div className="relative z-10 pt-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider font-mono flex items-center gap-1.5 shrink-0">
-                <Sliders className="h-3.5 w-3.5 text-indigo-400" />
-                <span>Perspectiva de Análisis:</span>
-              </span>
-
-              <div className="flex flex-wrap items-center gap-1.5 bg-slate-950/60 p-1 rounded-xl border border-slate-800/80">
-                {[
-                  { id: 'resumen', label: 'Resumen & Conectividad', icon: Sparkles },
-                  { id: 'operaciones', label: 'Operaciones (Flujo Completo)', icon: Activity },
-                  { id: 'almacen', label: 'Almacén & Espacio Físico', icon: Boxes },
-                  { id: 'capital', label: 'Catálogo, Etiquetas & Capital', icon: DollarSign },
-                  { id: 'soporte', label: 'Alertas, Reportes & Personal', icon: ShieldCheck },
-                  { id: 'todo', label: 'Vista Completa Integral', icon: ListFilter }
-                ].map((tab) => {
-                  const Icon = tab.icon;
-                  const isActive = executivePerspective === tab.id;
-                  return (
-                    <button
-                      key={tab.id}
-                      type="button"
-                      onClick={() => setExecutivePerspective(tab.id as any)}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                        isActive
-                          ? 'bg-indigo-600 text-white shadow-xs'
-                          : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-                      }`}
-                    >
-                      <Icon className="h-3.5 w-3.5" />
-                      <span>{tab.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
+          )}
 
           {/* KPI Cards Grid - Versión Ejecutiva Integrada */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 no-print" id="kpi-cards-grid">
