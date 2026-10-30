@@ -93,7 +93,7 @@ export const MovementsManager: React.FC<MovementsManagerProps> = ({
     return [];
   });
 
-  // Reload dispatches on window storage event
+  // Reload dispatches on window storage and custom update events
   useEffect(() => {
     const handleSync = () => {
       try {
@@ -103,9 +103,15 @@ export const MovementsManager: React.FC<MovementsManagerProps> = ({
     };
     window.addEventListener('storage', handleSync);
     window.addEventListener('owms_dispatch_updated', handleSync);
+    window.addEventListener('wms_direct_dispatches_updated', handleSync);
+    window.addEventListener('wms_inventory_updated', handleSync);
+    window.addEventListener('wms_movements_updated', handleSync);
     return () => {
       window.removeEventListener('storage', handleSync);
       window.removeEventListener('owms_dispatch_updated', handleSync);
+      window.removeEventListener('wms_direct_dispatches_updated', handleSync);
+      window.removeEventListener('wms_inventory_updated', handleSync);
+      window.removeEventListener('wms_movements_updated', handleSync);
     };
   }, []);
 
@@ -164,7 +170,7 @@ export const MovementsManager: React.FC<MovementsManagerProps> = ({
         recipientOrCustomer: d.borrowerName || d.destination || 'Personal / Cliente',
         operator: d.operator || 'Operador de Almacén',
         folioOrRef: d.id,
-        notes: d.notes || (isLoan ? `Vence: ${d.expectedReturnDate || 'Sin fecha'}` : d.deliveryMethod),
+        notes: d.notes || (isLoan ? `Vence: ${d.expectedReturnDate || 'Sin fecha'}` : 'Completado'),
         loanStatus: d.loanStatus
       });
     });
@@ -202,7 +208,7 @@ export const MovementsManager: React.FC<MovementsManagerProps> = ({
               : (ord.destination || 'Cliente Final'),
             operator: ord.assignedTo || 'Operador de Logística',
             folioOrRef: ord.id,
-            notes: ord.deliveryMethod || ord.carrier ? `Transporte: ${ord.carrier || ord.deliveryMethod} (${ord.status})` : `Estado: ${ord.status}`
+            notes: `Estado: ${ord.status}`
           });
         });
       }
@@ -579,6 +585,10 @@ export const MovementsManager: React.FC<MovementsManagerProps> = ({
       const logDetails = `Trasladadas ${qtyToMove} unidades de SKU ${movingSku} desde la celda ${sourceBinId} hacia la celda ${targetBinId}. Operador: ${activeOperatorName}.`;
 
       await onUpdateBins(updatedBins, logAction, logDetails);
+
+      window.dispatchEvent(new CustomEvent('wms_bins_updated'));
+      window.dispatchEvent(new CustomEvent('wms_movements_updated'));
+      window.dispatchEvent(new Event('storage'));
 
       const newSessionRecord: SessionMovement = {
         sku: movingSku,

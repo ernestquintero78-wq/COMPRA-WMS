@@ -2348,8 +2348,7 @@ export default function ReportsCenter({
                           <th className="py-2.5 px-3 border-r border-slate-300">SKU</th>
                           <th className="py-2.5 px-3 border-r border-slate-300">Producto</th>
                           <th className="py-2.5 px-3 border-r border-slate-300 text-right">Cant.</th>
-                          <th className="py-2.5 px-3 border-r border-slate-300">Destino / Prestatario</th>
-                          <th className="py-2.5 px-3">Medio / Chofer</th>
+                          <th className="py-2.5 px-3">Destino / Prestatario</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-200 text-[10px] font-sans">
@@ -2375,7 +2374,7 @@ export default function ReportsCenter({
                             <td className="py-2 px-3 border-r border-slate-200 font-mono font-bold">{disp.sku}</td>
                             <td className="py-2 px-3 border-r border-slate-200 font-medium">{disp.productName || disp.name}</td>
                             <td className="py-2 px-3 border-r border-slate-200 text-right font-mono font-extrabold text-slate-900">{disp.qty || disp.quantity}</td>
-                            <td className="py-2 px-3 border-r border-slate-200 text-slate-700">
+                            <td className="py-2 px-3 text-slate-700">
                               <div>{disp.destination || disp.client || 'Mostrador'}</div>
                               {disp.borrowerName && (
                                 <div className="text-[8px] text-blue-700 font-mono font-bold">
@@ -2383,7 +2382,6 @@ export default function ReportsCenter({
                                 </div>
                               )}
                             </td>
-                            <td className="py-2 px-3 text-slate-600 text-[9px]">{disp.deliveryMethod || 'Retiro'} {disp.carrier ? `(${disp.carrier})` : ''}</td>
                           </tr>
                         ))}
                       </tbody>

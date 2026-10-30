@@ -990,7 +990,7 @@ export const PersonnelManager: React.FC<PersonnelManagerProps> = ({
                             {person.status === 'active' && onNavigateToTab && (
                               <button
                                 type="button"
-                                onClick={() => onNavigateToTab('salidas')}
+                                onClick={() => onNavigateToTab('prestamos')}
                                 className="px-2.5 py-1 rounded-lg text-[10px] font-bold font-mono bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 transition cursor-pointer flex items-center gap-1"
                                 title="Prestar herramienta a este técnico"
                               >
@@ -1158,7 +1158,7 @@ export const PersonnelManager: React.FC<PersonnelManagerProps> = ({
                         {person.status === 'active' && onNavigateToTab && (
                           <button
                             type="button"
-                            onClick={() => onNavigateToTab('salidas')}
+                            onClick={() => onNavigateToTab('prestamos')}
                             className="text-[10px] text-indigo-700 hover:text-indigo-900 font-mono font-bold cursor-pointer underline"
                             title="Prestar herramienta a este técnico"
                           >

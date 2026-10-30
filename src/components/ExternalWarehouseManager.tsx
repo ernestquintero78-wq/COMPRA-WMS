@@ -1478,32 +1478,17 @@ export const ExternalWarehouseManager: React.FC<ExternalWarehouseManagerProps> =
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1.5 tracking-wider">
-                    Transporte / Chofer / Placas:
-                  </label>
-                  <input
-                    type="text"
-                    value={inboundCarrier}
-                    onChange={(e) => setInboundCarrier(e.target.value)}
-                    placeholder="Ej. Camioneta #04, Chofer: Juan Pérez..."
-                    className="w-full p-3 text-xs border border-slate-250 rounded-xl bg-white text-slate-800 focus:outline-none focus:border-blue-500 shadow-2xs"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1.5 tracking-wider">
-                    Observaciones / Notas:
-                  </label>
-                  <input
-                    type="text"
-                    value={inboundNotes}
-                    onChange={(e) => setInboundNotes(e.target.value)}
-                    placeholder="Condición del material, sellos de seguridad..."
-                    className="w-full p-3 text-xs border border-slate-250 rounded-xl bg-white text-slate-800 focus:outline-none focus:border-blue-500 shadow-2xs"
-                  />
-                </div>
+              <div>
+                <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1.5 tracking-wider">
+                  Observaciones / Notas:
+                </label>
+                <input
+                  type="text"
+                  value={inboundNotes}
+                  onChange={(e) => setInboundNotes(e.target.value)}
+                  placeholder="Condición del material, sellos de seguridad..."
+                  className="w-full p-3 text-xs border border-slate-250 rounded-xl bg-white text-slate-800 focus:outline-none focus:border-blue-500 shadow-2xs"
+                />
               </div>
 
               <div className="pt-2">
@@ -1700,22 +1685,8 @@ export const ExternalWarehouseManager: React.FC<ExternalWarehouseManagerProps> =
                   />
                 </div>
 
-                {/* 5. Transporte */}
-                <div>
-                  <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1.5 tracking-wider">
-                    Transporte / Guía / Paquetería:
-                  </label>
-                  <input
-                    type="text"
-                    value={outboundCarrier}
-                    onChange={(e) => setOutboundCarrier(e.target.value)}
-                    placeholder="Ej. FedEx Priority, Camioneta #02..."
-                    className="w-full p-3 text-xs border border-slate-250 rounded-xl bg-white text-slate-800 focus:outline-none focus:border-amber-500 shadow-2xs"
-                  />
-                </div>
-
-                {/* 6. Documento / Folio de Salida */}
-                <div>
+                {/* 5. Documento / Folio de Salida */}
+                <div className="sm:col-span-2">
                   <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1.5 tracking-wider">
                     Folio de Remisión / Pedido:
                   </label>
@@ -2790,7 +2761,6 @@ export const ExternalWarehouseManager: React.FC<ExternalWarehouseManagerProps> =
                       <div>
                         <p className="text-slate-400 text-[10px]">{selectedVoucherTx.type === 'Entrada' ? 'ORIGEN / REMITENTE:' : 'DESTINO / RECEPTOR:'}</p>
                         <p className="font-bold text-slate-900">{selectedVoucherTx.sourceOrDestination}</p>
-                        <p className="text-slate-500 text-[10px]">TRANSPORTE: {selectedVoucherTx.carrierOrDelivery || 'Sin especificar'}</p>
                       </div>
                     </div>
 

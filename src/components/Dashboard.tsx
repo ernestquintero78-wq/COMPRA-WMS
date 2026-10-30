@@ -3239,14 +3239,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     </span>
                   </div>
                 </div>
-
-                <div className="bg-slate-50/80 border border-slate-200 rounded-2xl p-4 space-y-1">
-                  <span className="text-[10px] font-mono uppercase font-bold text-slate-400 block">Medios de Entrega Activos</span>
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-2xl font-black font-mono text-indigo-600">{directDispatchesMetrics.methodData.length}</span>
-                    <span className="text-xs text-slate-400 font-medium">canales utilizados</span>
-                  </div>
-                </div>
               </div>
 
               {/* Tabla de Salidas Directas Recientes */}
@@ -3275,7 +3267,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
                           <th className="py-2.5 px-3">Producto / SKU</th>
                           <th className="py-2.5 px-3">Cantidad</th>
                           <th className="py-2.5 px-3">Destino / Cliente</th>
-                          <th className="py-2.5 px-3">Medio de Transporte</th>
                           <th className="py-2.5 px-3">Operador</th>
                         </tr>
                       </thead>
@@ -3295,11 +3286,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
                             </td>
                             <td className="py-2.5 px-3 font-semibold text-slate-700">
                               {d.destination}
-                            </td>
-                            <td className="py-2.5 px-3">
-                              <span className="inline-block text-[10px] font-semibold px-2 py-0.5 bg-indigo-50 border border-indigo-150 text-indigo-800 rounded-md">
-                                {d.deliveryMethod}
-                              </span>
                             </td>
                             <td className="py-2.5 px-3 text-slate-500 text-[11px]">
                               {d.operator}

@@ -23,6 +23,7 @@ import { PlatformSettings, DEFAULT_THEME_VALUES } from './components/PlatformSet
 import { ConfigurationHub } from './components/ConfigurationHub';
 import { ExternalWarehouseManager } from './components/ExternalWarehouseManager';
 import { PersonnelManager } from './components/PersonnelManager';
+import { ToolLoansManager } from './components/ToolLoansManager';
 import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts';
 import {
   Boxes,
@@ -66,7 +67,8 @@ import {
   Building2,
   Shield,
   Palette,
-  Users
+  Users,
+  Wrench
 } from 'lucide-react';
 
 export default function App() {
@@ -276,9 +278,42 @@ export default function App() {
     setStatusMsg('Sesión cerrada correctamente.');
   };
 
-  // 1. Fetch dataset from Supabase on mount
+  // 1. Fetch dataset from Supabase on mount and listen to cross-module update events
   useEffect(() => {
     loadWarehouseData();
+
+    let debounceTimer: any = null;
+    const handleGlobalSync = () => {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        loadWarehouseData();
+      }, 150);
+    };
+
+    window.addEventListener('wms_inventory_updated', handleGlobalSync);
+    window.addEventListener('wms_bins_updated', handleGlobalSync);
+    window.addEventListener('wms_direct_dispatches_updated', handleGlobalSync);
+    window.addEventListener('owms_dispatch_updated', handleGlobalSync);
+    window.addEventListener('owms_borrowers_updated', handleGlobalSync);
+    window.addEventListener('wms_movements_updated', handleGlobalSync);
+    window.addEventListener('wms_external_transfers_updated', handleGlobalSync);
+    window.addEventListener('warehouse_sections_updated', handleGlobalSync);
+    window.addEventListener('wms_warehouses_updated', handleGlobalSync);
+    window.addEventListener('storage', handleGlobalSync);
+
+    return () => {
+      clearTimeout(debounceTimer);
+      window.removeEventListener('wms_inventory_updated', handleGlobalSync);
+      window.removeEventListener('wms_bins_updated', handleGlobalSync);
+      window.removeEventListener('wms_direct_dispatches_updated', handleGlobalSync);
+      window.removeEventListener('owms_dispatch_updated', handleGlobalSync);
+      window.removeEventListener('owms_borrowers_updated', handleGlobalSync);
+      window.removeEventListener('wms_movements_updated', handleGlobalSync);
+      window.removeEventListener('wms_external_transfers_updated', handleGlobalSync);
+      window.removeEventListener('warehouse_sections_updated', handleGlobalSync);
+      window.removeEventListener('wms_warehouses_updated', handleGlobalSync);
+      window.removeEventListener('storage', handleGlobalSync);
+    };
   }, []);
 
   const loadWarehouseData = async () => {
@@ -430,6 +465,11 @@ export default function App() {
       logDetails.join(', ')
     );
 
+    window.dispatchEvent(new CustomEvent('wms_inventory_updated'));
+    window.dispatchEvent(new CustomEvent('wms_bins_updated'));
+    window.dispatchEvent(new CustomEvent('wms_movements_updated'));
+    window.dispatchEvent(new Event('storage'));
+
     await loadWarehouseData();
   };
 
@@ -451,6 +491,13 @@ export default function App() {
       logAction,
       logDetails
     );
+
+    window.dispatchEvent(new CustomEvent('wms_inventory_updated'));
+    window.dispatchEvent(new CustomEvent('wms_bins_updated'));
+    window.dispatchEvent(new CustomEvent('owms_dispatch_updated'));
+    window.dispatchEvent(new CustomEvent('wms_movements_updated'));
+    window.dispatchEvent(new Event('storage'));
+
     await loadWarehouseData();
   };
 
@@ -467,6 +514,11 @@ export default function App() {
         logAction,
         logDetails
       );
+
+      window.dispatchEvent(new CustomEvent('wms_bins_updated'));
+      window.dispatchEvent(new CustomEvent('wms_movements_updated'));
+      window.dispatchEvent(new Event('storage'));
+
       await loadWarehouseData();
     } catch (err) {
       console.error("Error updating warehouse layout on Supabase:", err);
@@ -520,6 +572,12 @@ export default function App() {
     } catch (e) {
       console.error('Error logging audit completion', e);
     }
+
+    window.dispatchEvent(new CustomEvent('wms_inventory_updated'));
+    window.dispatchEvent(new CustomEvent('wms_bins_updated'));
+    window.dispatchEvent(new CustomEvent('wms_movements_updated'));
+    window.dispatchEvent(new Event('storage'));
+
     await loadWarehouseData();
   };
 
@@ -546,6 +604,10 @@ export default function App() {
       `Registered ${fullOrder.type} order ${fullOrder.id} with items: ${JSON.stringify(fullOrder.items)}`
     );
 
+    window.dispatchEvent(new CustomEvent('owms_dispatch_updated'));
+    window.dispatchEvent(new CustomEvent('wms_movements_updated'));
+    window.dispatchEvent(new Event('storage'));
+
     await loadWarehouseData();
   };
 
@@ -567,6 +629,9 @@ export default function App() {
       'Shortest Pick Route Calculated',
       `Calculated serpentine optimal travel path for Order ${orderId}: [${path.join(' → ')}]`
     );
+
+    window.dispatchEvent(new CustomEvent('owms_dispatch_updated'));
+    window.dispatchEvent(new Event('storage'));
 
     await loadWarehouseData();
     setActiveTab('map'); // auto jump to map visual picker to inspect!
@@ -629,6 +694,12 @@ export default function App() {
       'Mark Order Dispatch Completed',
       `Cleared Order ${orderId}. Stock inventory adjustments applied: ${logDetails.join(', ')}`
     );
+
+    window.dispatchEvent(new CustomEvent('wms_inventory_updated'));
+    window.dispatchEvent(new CustomEvent('wms_bins_updated'));
+    window.dispatchEvent(new CustomEvent('owms_dispatch_updated'));
+    window.dispatchEvent(new CustomEvent('wms_movements_updated'));
+    window.dispatchEvent(new Event('storage'));
 
     await loadWarehouseData();
   };
@@ -707,7 +778,7 @@ export default function App() {
     await appendActivityLog(
       activeOperator ? `${activeOperator.name} (${activeOperator.role})` : (user?.displayName || 'Logistics Admin'),
       dispatchData.dispatchType === 'loan' ? 'Préstamo de Herramienta/Equipo' : 'Salida Directa de Almacén',
-      `${typeLabel} Salida de ${dispatchData.qty} uds de ${item.name} (${dispatchData.sku}) hacia "${dispatchData.destination}" vía "${dispatchData.deliveryMethod}". Celdas afectadas: ${deductedBins.join(', ') || 'Inventario General'}`
+      `${typeLabel} Salida de ${dispatchData.qty} uds de ${item.name} (${dispatchData.sku}) hacia "${dispatchData.destination}". Celdas afectadas: ${deductedBins.join(', ') || 'Inventario General'}`
     );
 
     // Cross-module broadcasts
@@ -1350,6 +1421,10 @@ export default function App() {
       `Updated metadata attributes for SKU ${sku}: ${Object.keys(updatedFields).join(', ')}.`
     );
 
+    window.dispatchEvent(new CustomEvent('wms_inventory_updated'));
+    window.dispatchEvent(new CustomEvent('warehouse_sections_updated'));
+    window.dispatchEvent(new Event('storage'));
+
     await loadWarehouseData();
   };
 
@@ -1580,7 +1655,8 @@ export default function App() {
                 <div className="space-y-1">
                   {[
                     { id: 'entradas', label: 'Entradas', icon: ArrowDownLeft },
-                    { id: 'salidas', label: 'Salidas', icon: ArrowUpRight },
+                    { id: 'salidas', label: 'Salidas Directas', icon: ArrowUpRight },
+                    { id: 'prestamos', label: 'Préstamos y Devoluciones', icon: Wrench },
                     { id: 'movimientos', label: 'Bitácora de Movimientos', icon: NotebookText },
                     { id: 'conteos', label: 'Conteos Cíclicos', icon: ClipboardCheck },
                     { id: 'almacen-externo', label: 'Almacén Externo', icon: Building2 },
@@ -1701,7 +1777,7 @@ export default function App() {
                 <span className="text-slate-300 font-light">|</span>
                 <span className="text-slate-500 font-medium">Sección activa:</span>
                 <span className="font-bold text-slate-800 capitalize font-mono">
-                  {activeTab === 'configuracion' || activeTab === 'crew' || activeTab === 'manual' ? 'Configuración' : activeTab === 'almacen-externo' ? 'Almacén Externo' : activeTab === 'personal' ? 'Personal (Prestatarios)' : activeTab === 'movimientos' ? 'Bitácora de Movimientos' : activeTab}
+                  {activeTab === 'configuracion' || activeTab === 'crew' || activeTab === 'manual' ? 'Configuración' : activeTab === 'almacen-externo' ? 'Almacén Externo' : activeTab === 'personal' ? 'Personal (Prestatarios)' : activeTab === 'movimientos' ? 'Bitácora de Movimientos' : activeTab === 'prestamos' ? 'Préstamo de Herramientas' : activeTab === 'salidas' ? 'Salidas Directas' : activeTab}
                 </span>
               </div>
               <span className="text-[10px] text-slate-400 hidden sm:inline font-mono">
@@ -2056,9 +2132,25 @@ export default function App() {
               orders={orders}
               onDirectDispatch={handleDirectDispatch}
               onCompleteOrder={handleCompleteOrder}
+              onReturnLoan={handleReturnLoan}
               activeOperator={activeOperator}
               platformTheme={platformTheme}
               onNavigateToTab={setActiveTab}
+              initialMode="express"
+            />
+          )}
+
+          {activeTab === 'prestamos' && (
+            <ToolLoansManager
+              inventory={inventory}
+              bins={bins}
+              orders={orders}
+              onDirectDispatch={handleDirectDispatch}
+              onReturnLoan={handleReturnLoan}
+              activeOperator={activeOperator}
+              platformTheme={platformTheme}
+              onNavigateToTab={setActiveTab}
+              initialSubTab="tracking"
             />
           )}
 
@@ -2424,6 +2516,7 @@ export default function App() {
               bins={bins}
               activeOperatorName={activeOperator ? `${activeOperator.name} (${activeOperator.role})` : (user?.name || user?.email || 'Administrador Logístico')}
               platformTheme={platformTheme}
+              onCentralExternalTransfer={handleCentralExternalTransfer}
             />
           )}
 
@@ -2476,6 +2569,7 @@ export default function App() {
               onNavigateToTab={setActiveTab}
               activeOperator={activeOperator}
               platformTheme={platformTheme}
+              onReturnLoan={handleReturnLoan}
             />
           )}
 

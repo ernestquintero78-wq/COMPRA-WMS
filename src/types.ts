@@ -9,6 +9,9 @@ export interface Bin {
   occupiedSku: string; // SKU or empty
   occupiedQty: number; // Qty of items
   status: 'Empty' | 'Partial' | 'Full';
+  segmentId?: string;      // ID of warehouse segment (e.g. 'wh-maseca', 'wh-oxxo', 'wh-trans')
+  segmentName?: string;    // Name of segment (e.g. 'Maseca', 'OXXO', 'Transporte')
+  segmentColor?: string;   // Hex color code for visual identification
 }
 
 export interface InventoryItem {

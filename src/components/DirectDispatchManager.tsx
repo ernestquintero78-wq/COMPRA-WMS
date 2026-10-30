@@ -38,7 +38,11 @@ import {
   Tag,
   BookOpen,
   ArrowRight,
-  ChevronDown
+  ChevronDown,
+  Hammer,
+  Zap,
+  CheckCheck,
+  Filter
 } from 'lucide-react';
 import { ArticleSuggestionInput } from './ArticleSuggestionInput';
 
@@ -95,6 +99,7 @@ interface DirectDispatchManagerProps {
   activeOperator?: any;
   platformTheme?: any;
   onNavigateToTab?: (tab: string) => void;
+  initialMode?: 'loans' | 'express' | 'history';
 }
 
 const INITIAL_BORROWERS_DATABASE: BorrowerEntry[] = [
@@ -170,17 +175,55 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
   onReturnLoan,
   activeOperator,
   platformTheme,
-  onNavigateToTab
+  onNavigateToTab,
+  initialMode
 }) => {
-  // Sub-tabs in Salidas module
-  const [activeView, setActiveView] = useState<'express' | 'history' | 'orders'>('express');
+  // Sub-tabs in Salidas / Préstamos module: 'loans' (Préstamo de herramientas), 'express' (Salida definitiva), 'history', 'orders'
+  const [activeView, setActiveView] = useState<'loans' | 'express' | 'history' | 'orders'>(() => {
+    return initialMode || 'loans';
+  });
+
+  useEffect(() => {
+    if (initialMode) {
+      setActiveView(initialMode);
+    }
+  }, [initialMode]);
+
+  // Dedicated states for Simplified Tool & Equipment Loan Desk
+  const [loanTechnician, setLoanTechnician] = useState<string>('');
+  const [loanDepartment, setLoanDepartment] = useState<string>('');
+  const [loanDestination, setLoanDestination] = useState<string>('');
+  const [loanSearchQuery, setLoanSearchQuery] = useState<string>('');
+  const [selectedLoanSku, setSelectedLoanSku] = useState<string>('');
+  const [loanQty, setLoanQty] = useState<number>(1);
+  const [loanDurationPreset, setLoanDurationPreset] = useState<'shift_end' | 'tomorrow' | '3days' | '1week' | 'custom'>('shift_end');
+  const [loanCustomDate, setLoanCustomDate] = useState<string>('');
+  const [loanNotes, setLoanNotes] = useState<string>('');
+  const [loanCategoryFilter, setLoanCategoryFilter] = useState<string>('ALL');
+  const [loanFeedback, setLoanFeedback] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  const [isLoanProcessing, setIsLoanProcessing] = useState<boolean>(false);
+  const [activeLoanSearch, setActiveLoanSearch] = useState<string>('');
+  const [isTechDropdownOpen, setIsTechDropdownOpen] = useState<boolean>(false);
+  const [showAddTechModal, setShowAddTechModal] = useState<boolean>(false);
+  const [newTechForm, setNewTechForm] = useState({ name: '', role: 'Técnico de Mantenimiento', dept: 'Taller / Mantenimiento' });
+  const techDropdownContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutsideTech = (e: MouseEvent) => {
+      if (techDropdownContainerRef.current && !techDropdownContainerRef.current.contains(e.target as Node)) {
+        setIsTechDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutsideTech);
+    return () => document.removeEventListener('mousedown', handleClickOutsideTech);
+  }, []);
 
   // Input states for Express Dispatch
   const [barcodeInput, setBarcodeInput] = useState('');
   const [selectedSku, setSelectedSku] = useState<string>('');
   const [quantity, setQuantity] = useState<number>(1);
   const [destination, setDestination] = useState<string>('');
-  const [deliveryMethod, setDeliveryMethod] = useState<string>('Reparto Local (Unidad Propia)');
+  const [deliveryMethod, setDeliveryMethod] = useState<string>('Salida de Almacén');
   const [customDeliveryMethodText, setCustomDeliveryMethodText] = useState<string>('');
   const [trackingNumber, setTrackingNumber] = useState<string>('');
   const [notes, setNotes] = useState<string>('');
@@ -344,6 +387,266 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
       window.dispatchEvent(new Event('storage'));
     } catch (e) {}
   }, [dispatchHistory]);
+
+  // Calculations and handlers for Simplified Tool Loan Desk
+  const calculatedLoanReturnDate = useMemo(() => {
+    const today = new Date();
+    if (loanDurationPreset === 'shift_end') {
+      return today.toISOString().slice(0, 10);
+    }
+    if (loanDurationPreset === 'tomorrow') {
+      const d = new Date();
+      d.setDate(d.getDate() + 1);
+      return d.toISOString().slice(0, 10);
+    }
+    if (loanDurationPreset === '3days') {
+      const d = new Date();
+      d.setDate(d.getDate() + 3);
+      return d.toISOString().slice(0, 10);
+    }
+    if (loanDurationPreset === '1week') {
+      const d = new Date();
+      d.setDate(d.getDate() + 7);
+      return d.toISOString().slice(0, 10);
+    }
+    return loanCustomDate || today.toISOString().slice(0, 10);
+  }, [loanDurationPreset, loanCustomDate]);
+
+  const formatSpanishFriendlyDate = (dateStr: string) => {
+    if (!dateStr) return '';
+    try {
+      const [y, m, d] = dateStr.split('-').map(Number);
+      const date = new Date(y, m - 1, d);
+      return date.toLocaleDateString('es-MX', {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric'
+      });
+    } catch (e) {
+      return dateStr;
+    }
+  };
+
+  const selectedLoanTool = useMemo(() => {
+    if (!selectedLoanSku) return null;
+    return inventory.find(i => i.sku === selectedLoanSku) || null;
+  }, [selectedLoanSku, inventory]);
+
+  const selectedToolBins = useMemo(() => {
+    if (!selectedLoanSku) return [];
+    return bins.filter(b => b.occupiedSku === selectedLoanSku && b.occupiedQty > 0);
+  }, [selectedLoanSku, bins]);
+
+  const activeLoansList = useMemo(() => {
+    return dispatchHistory.filter(d => d.dispatchType === 'loan' && d.loanStatus !== 'returned');
+  }, [dispatchHistory]);
+
+  const filteredActiveLoans = useMemo(() => {
+    const q = activeLoanSearch.trim().toLowerCase();
+    if (!q) return activeLoansList;
+    return activeLoansList.filter(l => 
+      (l.productName || '').toLowerCase().includes(q) ||
+      (l.sku || '').toLowerCase().includes(q) ||
+      (l.borrowerName || '').toLowerCase().includes(q) ||
+      (l.borrowerDepartment || '').toLowerCase().includes(q) ||
+      (l.id || '').toLowerCase().includes(q)
+    );
+  }, [activeLoansList, activeLoanSearch]);
+
+  const overdueLoansCount = useMemo(() => {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    return activeLoansList.filter(l => l.expectedReturnDate && l.expectedReturnDate < todayStr).length;
+  }, [activeLoansList]);
+
+  const todayDueLoansCount = useMemo(() => {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    return activeLoansList.filter(l => l.expectedReturnDate === todayStr).length;
+  }, [activeLoansList]);
+
+  const techniciansWithActiveLoans = useMemo(() => {
+    const set = new Set<string>();
+    activeLoansList.forEach(l => {
+      if (l.borrowerName) set.add(l.borrowerName);
+    });
+    return set;
+  }, [activeLoansList]);
+
+  // Suggested tools list with category filters and search
+  const toolsCatalog = useMemo(() => {
+    return inventory.filter(item => {
+      if (loanCategoryFilter !== 'ALL') {
+        const cat = (item.category || '').toLowerCase();
+        const name = item.name.toLowerCase();
+        if (loanCategoryFilter === 'TOOLS') {
+          const match = cat.includes('herramienta') || cat.includes('tool') || 
+            name.includes('taladro') || name.includes('llave') || name.includes('esmeril') || 
+            name.includes('cautín') || name.includes('martillo') || name.includes('rotomartillo');
+          if (!match) return false;
+        }
+        if (loanCategoryFilter === 'ELECTRICAL') {
+          const match = cat.includes('eléctric') || cat.includes('electr') || cat.includes('hazmat') ||
+            name.includes('controller') || name.includes('batería') || name.includes('battery') || name.includes('cpu');
+          if (!match) return false;
+        }
+        if (loanCategoryFilter === 'MEASUREMENT') {
+          const match = cat.includes('medición') || cat.includes('sensor') || 
+            name.includes('sensor') || name.includes('multímetro') || name.includes('calibrador') || name.includes('vernier');
+          if (!match) return false;
+        }
+        if (loanCategoryFilter === 'SAFETY') {
+          const match = cat.includes('seguridad') || cat.includes('cable') || 
+            name.includes('cable') || name.includes('escalera') || name.includes('arnés');
+          if (!match) return false;
+        }
+      }
+
+      const q = loanSearchQuery.trim().toLowerCase();
+      if (!q) return true;
+      return (
+        item.name.toLowerCase().includes(q) ||
+        item.sku.toLowerCase().includes(q) ||
+        (item.barcode && item.barcode.toLowerCase().includes(q)) ||
+        (item.category && item.category.toLowerCase().includes(q))
+      );
+    });
+  }, [inventory, loanCategoryFilter, loanSearchQuery]);
+
+  // Quick loan execution
+  const handleExecuteToolLoan = async () => {
+    if (!selectedLoanTool) {
+      setLoanFeedback({
+        type: 'err',
+        text: '⚠️ Paso 1: Seleccione qué herramienta o equipo se va a prestar.'
+      });
+      return;
+    }
+
+    const targetWhere = (loanDestination || loanTechnician || '').trim();
+    if (!targetWhere) {
+      setLoanFeedback({
+        type: 'err',
+        text: '⚠️ Paso 2: Indique a dónde se va la herramienta o a qué técnico se le entrega.'
+      });
+      return;
+    }
+
+    if (loanQty <= 0) {
+      setLoanFeedback({
+        type: 'err',
+        text: '⚠️ La cantidad a prestar debe ser al menos 1 unidad.'
+      });
+      return;
+    }
+
+    const available = selectedLoanTool.qty;
+    if (available <= 0) {
+      setLoanFeedback({
+        type: 'err',
+        text: `⚠️ No hay existencias disponibles de "${selectedLoanTool.name}" en almacén.`
+      });
+      return;
+    }
+
+    if (loanQty > available) {
+      setLoanFeedback({
+        type: 'err',
+        text: `⚠️ Stock insuficiente. Solo hay ${available} unidades de "${selectedLoanTool.name}" disponibles.`
+      });
+      return;
+    }
+
+    try {
+      setIsLoanProcessing(true);
+      setLoanFeedback(null);
+
+      const effectiveDestination = targetWhere;
+      const effectiveBorrower = loanTechnician.trim() || targetWhere;
+      const effectiveDelivery = 'Préstamo de Pañol / Entrega en Mano';
+      const effectiveNotes = loanNotes.trim()
+        ? `Préstamo de Herramienta. ${loanNotes.trim()}`
+        : 'Préstamo de Herramienta / Pañol';
+
+      const result = await onDirectDispatch({
+        sku: selectedLoanTool.sku,
+        qty: loanQty,
+        destination: effectiveDestination,
+        deliveryMethod: effectiveDelivery,
+        notes: effectiveNotes,
+        dispatchType: 'loan',
+        dispatchTypeLabel: 'Préstamo de Herramienta',
+        borrowerName: effectiveBorrower,
+        expectedReturnDate: calculatedLoanReturnDate
+      });
+
+      if (result) {
+        const usedBins = result.deductedBins && result.deductedBins.length > 0
+          ? result.deductedBins
+          : selectedToolBins.map(b => b.id).slice(0, 2);
+
+        const newRecord: DirectDispatchRecord = {
+          id: result.orderId,
+          timestamp: new Date().toISOString(),
+          sku: selectedLoanTool.sku,
+          productName: selectedLoanTool.name,
+          category: selectedLoanTool.category || 'Herramientas y Equipos',
+          qty: loanQty,
+          originBins: usedBins.length > 0 ? usedBins : ['Almacén Central / Pañol'],
+          destination: effectiveDestination,
+          dispatchType: 'loan',
+          dispatchTypeLabel: 'Préstamo de Herramienta',
+          borrowerName: effectiveBorrower,
+          borrowerDepartment: loanDepartment.trim() || 'Taller / Obra',
+          expectedReturnDate: calculatedLoanReturnDate,
+          loanStatus: 'active',
+          deliveryMethod: effectiveDelivery,
+          notes: effectiveNotes,
+          operator: activeOperator ? activeOperator.name : 'Administrador de Logística',
+          totalEstimatedWeightKg: (selectedLoanTool.unitWeight || 1) * loanQty
+        };
+
+        // If technician not yet in borrowersDb, save automatically if it was typed
+        if (loanTechnician.trim()) {
+          const exists = borrowersDb.some(b => b.name.toLowerCase() === loanTechnician.trim().toLowerCase());
+          if (!exists) {
+            handleSaveNewBorrowerToDb(loanTechnician.trim(), loanDepartment.trim());
+          }
+        }
+
+        const updatedHistory = [newRecord, ...dispatchHistory];
+        setDispatchHistory(updatedHistory);
+
+        try {
+          localStorage.setItem('OWMS_DIRECT_DISPATCH_HISTORY', JSON.stringify(updatedHistory));
+          window.dispatchEvent(new CustomEvent('wms_direct_dispatches_updated'));
+          window.dispatchEvent(new CustomEvent('owms_dispatch_updated'));
+          window.dispatchEvent(new CustomEvent('wms_inventory_updated'));
+          window.dispatchEvent(new CustomEvent('wms_movements_updated'));
+          window.dispatchEvent(new Event('storage'));
+        } catch (e) {}
+
+        setLastDispatchRecord(newRecord);
+        setLoanFeedback({
+          type: 'ok',
+          text: `✓ ¡Préstamo registrado! ${selectedLoanTool.name} (${loanQty} uds) se va a ${effectiveDestination} y regresa el ${formatSpanishFriendlyDate(calculatedLoanReturnDate)} (Folio: ${result.orderId}).`
+        });
+
+        // Reset loan selections for next transaction
+        setSelectedLoanSku('');
+        setLoanQty(1);
+        setLoanDestination('');
+        setLoanTechnician('');
+        setLoanNotes('');
+      }
+    } catch (err: any) {
+      setLoanFeedback({
+        type: 'err',
+        text: `Error al registrar el préstamo: ${err?.message || 'Error inesperado'}`
+      });
+    } finally {
+      setIsLoanProcessing(false);
+    }
+  };
 
   // Quick destination presets
   const destinationPresets = [
@@ -552,18 +855,11 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
       return;
     }
 
-    if (!deliveryMethod.trim()) {
-      setFeedback({ type: 'err', text: 'Seleccione el medio de entrega.' });
-      return;
-    }
-
     try {
       setIsProcessing(true);
       setFeedback(null);
 
-      const effectiveDeliveryMethod = deliveryMethod === '__OTHER__'
-        ? (customDeliveryMethodText.trim() ? `Otro: ${customDeliveryMethodText.trim()}` : 'Otro (Personalizado)')
-        : deliveryMethod;
+      const effectiveDeliveryMethod = deliveryMethod?.trim() || 'Salida de Almacén';
 
       const dispatchTypeLabel = dispatchType === 'loan'
         ? 'Préstamo de Herramienta'
@@ -715,58 +1011,106 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
       <div className="bg-white p-5 sm:p-6 rounded-3xl border border-slate-200/80 shadow-xs flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div className="space-y-1">
           <div className="flex items-center gap-2">
-            <span className="p-1 px-2.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-[10px] font-mono font-black uppercase tracking-wider flex items-center gap-1.5">
-              <ArrowUpRight className="h-3.5 w-3.5" />
-              Outbound Express
+            <span className={`p-1 px-2.5 rounded-lg border text-[10px] font-mono font-black uppercase tracking-wider flex items-center gap-1.5 ${
+              activeView === 'loans'
+                ? 'bg-blue-50 border-blue-200 text-blue-700'
+                : activeView === 'express'
+                ? 'bg-amber-50 border-amber-200 text-amber-700'
+                : 'bg-slate-100 border-slate-200 text-slate-700'
+            }`}>
+              {activeView === 'loans' ? (
+                <>
+                  <Wrench className="h-3.5 w-3.5 text-blue-600" />
+                  Pañol de Herramientas & Equipos
+                </>
+              ) : activeView === 'express' ? (
+                <>
+                  <ArrowUpRight className="h-3.5 w-3.5 text-amber-600" />
+                  Salidas Definitivas
+                </>
+              ) : (
+                <>
+                  <Clock className="h-3.5 w-3.5 text-slate-600" />
+                  Auditoría de Movimientos
+                </>
+              )}
             </span>
             <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
-              Módulo de Salidas Directas de Almacén
+              {activeView === 'loans'
+                ? 'Préstamo Rápido de Herramientas y Equipos'
+                : activeView === 'express'
+                ? 'Salidas Definitivas de Almacén'
+                : 'Historial de Salidas y Devoluciones'}
             </h2>
           </div>
           <p className="text-xs sm:text-sm text-slate-500 max-w-2xl">
-            Registre salidas de mercancía de forma inmediata sin crear órdenes previas: seleccione o escanee el producto, indique el destino y el medio de entrega.
+            {activeView === 'loans'
+              ? 'Préstamo ágil de herramienta a técnicos en 3 simples clics y devolución directa al almacén con un solo botón.'
+              : activeView === 'express'
+              ? 'Registre salidas de mercancía de forma inmediata sin crear órdenes previas: seleccione o escanee el producto e indique el destino.'
+              : 'Consulte remisiones, vales de resguardo, estado de préstamos y descargue reportes en Excel.'}
           </p>
         </div>
 
         {/* View Switcher Tabs */}
-        <div className="flex bg-slate-100 p-1 rounded-2xl border border-slate-200 shrink-0 select-none">
+        <div className="flex bg-slate-100 p-1.5 rounded-2xl border border-slate-200 shrink-0 select-none flex-wrap gap-1">
+          <button
+            type="button"
+            onClick={() => setActiveView('loans')}
+            className={`px-4 py-2.5 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+              activeView === 'loans'
+                ? 'bg-blue-600 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+            }`}
+          >
+            <Wrench className={`h-4 w-4 ${activeView === 'loans' ? 'text-white' : 'text-blue-600'}`} />
+            <span>Préstamo de Herramientas y Equipos</span>
+            {activeLoansList.length > 0 && (
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-black ${
+                activeView === 'loans' ? 'bg-white text-blue-700' : 'bg-blue-100 text-blue-800'
+              }`}>
+                {activeLoansList.length} activas
+              </span>
+            )}
+          </button>
+
           <button
             type="button"
             onClick={() => setActiveView('express')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+            className={`px-4 py-2.5 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
               activeView === 'express'
                 ? 'bg-white text-slate-900 shadow-xs'
-                : 'text-slate-500 hover:text-slate-800'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
             }`}
           >
-            <Sparkles className="h-3.5 w-3.5 text-amber-600" />
-            <span>Salida Directa</span>
+            <Package className="h-4 w-4 text-amber-600" />
+            <span>Salidas Definitivas</span>
           </button>
           
           <button
             type="button"
             onClick={() => setActiveView('history')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+            className={`px-4 py-2.5 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
               activeView === 'history'
                 ? 'bg-white text-slate-900 shadow-xs'
-                : 'text-slate-500 hover:text-slate-800'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
             }`}
           >
-            <Clock className="h-3.5 w-3.5 text-blue-600" />
-            <span>Historial ({dispatchHistory.length})</span>
+            <Clock className="h-4 w-4 text-blue-600" />
+            <span>Historial & Devoluciones ({dispatchHistory.length})</span>
           </button>
 
           {pendingOrdersList.length > 0 && (
             <button
               type="button"
               onClick={() => setActiveView('orders')}
-              className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+              className={`px-4 py-2.5 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
                 activeView === 'orders'
                   ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-500 hover:text-slate-800'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
               }`}
             >
-              <ClipboardList className="h-3.5 w-3.5 text-indigo-600" />
+              <ClipboardList className="h-4 w-4 text-indigo-600" />
               <span>Pedidos en Cola ({pendingOrdersList.length})</span>
             </button>
           )}
@@ -798,10 +1142,787 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
       )}
 
       {/* ========================================================================= */}
+      {/* VISTA 0: PRÉSTAMO RÁPIDO DE HERRAMIENTAS Y EQUIPOS (SIMPLIFIED LOAN DESK)   */}
+      {/* ========================================================================= */}
+      {activeView === 'loans' && (
+        <div className="space-y-6 animate-fadeIn">
+
+          {/* Feedback específico de préstamos */}
+          {loanFeedback && (
+            <div className={`p-4 rounded-2xl text-xs font-bold flex items-center justify-between shadow-2xs animate-fadeIn ${
+              loanFeedback.type === 'ok'
+                ? 'bg-emerald-50 border border-emerald-200 text-emerald-800'
+                : 'bg-rose-50 border border-rose-200 text-rose-800'
+            }`}>
+              <div className="flex items-center gap-2.5">
+                {loanFeedback.type === 'ok' ? (
+                  <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0" />
+                ) : (
+                  <AlertTriangle className="h-5 w-5 text-rose-600 shrink-0" />
+                )}
+                <span>{loanFeedback.text}</span>
+              </div>
+              <button
+                onClick={() => setLoanFeedback(null)}
+                className="text-slate-400 hover:text-slate-600 cursor-pointer p-1"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          )}
+
+          {/* Tarjetas de Métricas de Préstamos */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+            <div className="bg-white p-4 rounded-2xl border border-slate-200/90 shadow-2xs space-y-1">
+              <span className="text-[10px] font-mono uppercase font-bold text-slate-400 flex items-center gap-1">
+                <Wrench className="h-3 w-3 text-blue-600" />
+                <span>En Préstamo Activo</span>
+              </span>
+              <div className="flex items-baseline justify-between">
+                <span className="text-2xl font-black font-mono text-slate-900">
+                  {activeLoansList.length}
+                </span>
+                <span className="text-[11px] font-bold text-blue-600">herramientas</span>
+              </div>
+            </div>
+
+            <div className="bg-white p-4 rounded-2xl border border-slate-200/90 shadow-2xs space-y-1">
+              <span className="text-[10px] font-mono uppercase font-bold text-slate-400 flex items-center gap-1">
+                <Clock className="h-3 w-3 text-amber-500" />
+                <span>Vencen Hoy</span>
+              </span>
+              <div className="flex items-baseline justify-between">
+                <span className={`text-2xl font-black font-mono ${todayDueLoansCount > 0 ? 'text-amber-600' : 'text-slate-800'}`}>
+                  {todayDueLoansCount}
+                </span>
+                <span className="text-[11px] font-bold text-slate-500">por retornar</span>
+              </div>
+            </div>
+
+            <div className="bg-white p-4 rounded-2xl border border-slate-200/90 shadow-2xs space-y-1">
+              <span className="text-[10px] font-mono uppercase font-bold text-slate-400 flex items-center gap-1">
+                <AlertTriangle className="h-3 w-3 text-rose-600" />
+                <span>Préstamos Atrasados</span>
+              </span>
+              <div className="flex items-baseline justify-between">
+                <span className={`text-2xl font-black font-mono ${overdueLoansCount > 0 ? 'text-rose-600 animate-pulse' : 'text-slate-800'}`}>
+                  {overdueLoansCount}
+                </span>
+                <span className="text-[11px] font-bold text-rose-600">urgentes</span>
+              </div>
+            </div>
+
+            <div className="bg-white p-4 rounded-2xl border border-slate-200/90 shadow-2xs space-y-1">
+              <span className="text-[10px] font-mono uppercase font-bold text-slate-400 flex items-center gap-1">
+                <UserCheck className="h-3 w-3 text-indigo-600" />
+                <span>Técnicos con Equipo</span>
+              </span>
+              <div className="flex items-baseline justify-between">
+                <span className="text-2xl font-black font-mono text-slate-900">
+                  {techniciansWithActiveLoans.size}
+                </span>
+                <span className="text-[11px] font-bold text-indigo-600">colaboradores</span>
+              </div>
+            </div>
+          </div>
+
+          {/* FORMULARIO DIRECTO: LO QUE SE PRESTA, A DÓNDE SE VA Y CUÁNDO REGRESA */}
+          <div className="bg-white p-5 sm:p-7 rounded-3xl border border-blue-200/90 shadow-xs space-y-6">
+            
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-150">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="h-7 w-7 rounded-xl bg-blue-600 text-white flex items-center justify-center font-bold text-xs shadow-2xs">
+                    <Wrench className="h-4 w-4" />
+                  </span>
+                  <h3 className="text-base sm:text-lg font-black text-slate-900 tracking-tight">
+                    Registro de Préstamo de Herramienta
+                  </h3>
+                </div>
+                <p className="text-xs text-slate-500">
+                  Solo 3 datos esenciales: <strong>lo que se presta</strong>, <strong>a dónde se va</strong> y <strong>cuándo regresa</strong>.
+                </p>
+              </div>
+
+              {selectedLoanTool && (loanDestination || loanTechnician) && (
+                <div className="hidden sm:flex items-center gap-2 text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-xl">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                  <span>Listo para registrar</span>
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+              {/* 1. LO QUE SE PRESTA */}
+              <div className="space-y-4 p-4 sm:p-5 rounded-2xl bg-slate-50/70 border border-slate-200 flex flex-col justify-between">
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="h-7 w-7 rounded-xl bg-amber-500 text-white font-mono font-black text-xs flex items-center justify-center shadow-xs">
+                        1
+                      </span>
+                      <h4 className="text-xs sm:text-sm font-black text-slate-900">
+                        ¿Qué se presta?
+                      </h4>
+                    </div>
+                    {selectedLoanTool && (
+                      <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full flex items-center gap-1">
+                        <Check className="h-3 w-3" />
+                        <span>Herramienta lista</span>
+                      </span>
+                    )}
+                  </div>
+
+                  {selectedLoanTool ? (
+                    /* Tarjeta de la Herramienta Seleccionada */
+                    <div className="p-3.5 bg-white border-2 border-amber-400 rounded-2xl shadow-2xs space-y-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-start gap-2.5">
+                          <div className="h-10 w-10 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-2xs">
+                            <Wrench className="h-5 w-5" />
+                          </div>
+                          <div>
+                            <span className="font-mono text-[10px] font-bold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+                              {selectedLoanTool.sku}
+                            </span>
+                            <h5 className="text-xs sm:text-sm font-black text-slate-900 leading-tight mt-1">
+                              {selectedLoanTool.name}
+                            </h5>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedLoanSku('');
+                            setLoanQty(1);
+                          }}
+                          className="text-[10px] text-rose-600 hover:text-rose-800 font-bold bg-rose-50 hover:bg-rose-100 border border-rose-200 px-2 py-1 rounded-lg transition cursor-pointer"
+                        >
+                          Cambiar
+                        </button>
+                      </div>
+
+                      {/* Stock y Ubicación en estante */}
+                      <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100 text-[10px]">
+                        <div className="bg-slate-50 p-2 rounded-lg border border-slate-150">
+                          <span className="text-slate-400 font-mono uppercase block">Disponible en Almacén</span>
+                          <strong className="text-xs font-black text-slate-900">{selectedLoanTool.qty} uds</strong>
+                        </div>
+                        <div className="bg-slate-50 p-2 rounded-lg border border-slate-150">
+                          <span className="text-slate-400 font-mono uppercase block">Ubicación (Picking)</span>
+                          <strong className="text-xs font-mono font-bold text-amber-800 truncate block">
+                            {selectedToolBins.length > 0 ? selectedToolBins[0].id : 'Almacén Central'}
+                          </strong>
+                        </div>
+                      </div>
+
+                      {/* Stepper de Cantidad */}
+                      <div className="flex items-center justify-between pt-1">
+                        <span className="text-xs font-bold text-slate-700">Cantidad a prestar:</span>
+                        <div className="flex items-center border border-slate-300 rounded-xl overflow-hidden bg-slate-50">
+                          <button
+                            type="button"
+                            onClick={() => setLoanQty(Math.max(1, loanQty - 1))}
+                            disabled={loanQty <= 1}
+                            className="px-2.5 py-1 text-slate-700 hover:bg-slate-200 font-bold disabled:opacity-30 cursor-pointer"
+                          >
+                            -
+                          </button>
+                          <span className="px-3 py-1 font-mono font-black text-xs text-slate-900">
+                            {loanQty}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setLoanQty(Math.min(selectedLoanTool.qty, loanQty + 1))}
+                            disabled={loanQty >= selectedLoanTool.qty}
+                            className="px-2.5 py-1 text-slate-700 hover:bg-slate-200 font-bold disabled:opacity-30 cursor-pointer"
+                          >
+                            +
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    /* Buscador y Galería Rápida de Herramientas */
+                    <div className="space-y-2.5">
+                      <div className="relative">
+                        <Search className="absolute left-3 top-3 h-3.5 w-3.5 text-slate-400" />
+                        <input
+                          type="text"
+                          value={loanSearchQuery}
+                          onChange={(e) => setLoanSearchQuery(e.target.value)}
+                          placeholder="Escriba o escanee herramienta (taladro, multímetro...)"
+                          className="w-full pl-9 pr-4 py-2.5 bg-white border border-slate-300 rounded-xl text-xs font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500 shadow-3xs"
+                        />
+                      </div>
+
+                      {/* Herramientas disponibles para elegir en 1 clic */}
+                      <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                        <span className="text-[10px] font-mono uppercase font-bold text-slate-400 block">
+                          Herramientas disponibles (1 clic para elegir):
+                        </span>
+                        <div className="grid grid-cols-1 gap-1.5">
+                          {toolsCatalog.slice(0, 5).map(item => (
+                            <button
+                              key={item.sku}
+                              type="button"
+                              onClick={() => {
+                                setSelectedLoanSku(item.sku);
+                                setLoanQty(1);
+                              }}
+                              className="w-full p-2 bg-white hover:bg-amber-50/70 border border-slate-200 hover:border-amber-300 rounded-xl text-left transition flex items-center justify-between gap-2 cursor-pointer shadow-3xs group"
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <div className="h-7 w-7 rounded-lg bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">
+                                  <Wrench className="h-3.5 w-3.5" />
+                                </div>
+                                <div className="min-w-0 truncate">
+                                  <span className="text-xs font-bold text-slate-800 group-hover:text-amber-900 block truncate">
+                                    {item.name}
+                                  </span>
+                                  <span className="text-[10px] font-mono text-slate-400 block">
+                                    {item.sku} • Stock: <strong className="text-slate-700">{item.qty} uds</strong>
+                                  </span>
+                                </div>
+                              </div>
+                              <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-lg border border-amber-200 shrink-0">
+                                Elegir
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="pt-2 text-[10px] text-slate-400 border-t border-slate-200/80">
+                  Herramienta o equipo que sale del almacén
+                </div>
+              </div>
+
+              {/* 2. A DÓNDE SE VA */}
+              <div className="space-y-4 p-4 sm:p-5 rounded-2xl bg-slate-50/70 border border-slate-200 flex flex-col justify-between">
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="h-7 w-7 rounded-xl bg-blue-600 text-white font-mono font-black text-xs flex items-center justify-center shadow-xs">
+                        2
+                      </span>
+                      <h4 className="text-xs sm:text-sm font-black text-slate-900">
+                        ¿A dónde se va?
+                      </h4>
+                    </div>
+                    {(loanDestination || loanTechnician) && (
+                      <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full flex items-center gap-1">
+                        <Check className="h-3 w-3" />
+                        <span>Destino definido</span>
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Input Directo de Destino / Quién se la lleva */}
+                  <div className="space-y-2.5">
+                    <div className="relative">
+                      <MapPin className="absolute left-3 top-3 h-3.5 w-3.5 text-slate-400" />
+                      <input
+                        type="text"
+                        value={loanDestination || loanTechnician}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setLoanDestination(val);
+                          setLoanTechnician(val);
+                        }}
+                        placeholder="Escriba destino o persona (ej. Taller, Carlos Martínez...)"
+                        className="w-full pl-9 pr-4 py-2.5 bg-white border border-slate-300 rounded-xl text-xs font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-3xs"
+                      />
+                    </div>
+
+                    {/* Chips Rápidos de Destinos y Técnicos Frecuentes (1 Clic) */}
+                    <div className="space-y-1.5">
+                      <span className="text-[10px] font-mono uppercase font-bold text-slate-400 block">
+                        Destinos y técnicos frecuentes (1 clic para rellenar):
+                      </span>
+                      <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto pr-1">
+                        {[
+                          'Taller Mecánico',
+                          'Mantenimiento Industrial',
+                          'Línea de Producción',
+                          'Obra Activa / Patios',
+                          'Carlos Martínez',
+                          'Daniel Ochoa',
+                          'Alejandro Ruiz',
+                          'Javier Gómez',
+                          'Miguel Ángel Torres',
+                          'Eduardo Valdés'
+                        ].map(place => (
+                          <button
+                            key={place}
+                            type="button"
+                            onClick={() => {
+                              setLoanDestination(place);
+                              setLoanTechnician(place);
+                            }}
+                            className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition cursor-pointer flex items-center gap-1 shadow-3xs border ${
+                              (loanDestination === place || loanTechnician === place)
+                                ? 'bg-blue-600 text-white border-blue-600 font-bold'
+                                : 'bg-white hover:bg-blue-50 text-slate-700 hover:text-blue-800 border-slate-200'
+                            }`}
+                          >
+                            <span className={`w-1.5 h-1.5 rounded-full ${
+                              (loanDestination === place || loanTechnician === place) ? 'bg-white' : 'bg-blue-500'
+                            }`}></span>
+                            <span>{place}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="pt-2 text-[10px] text-slate-400 border-t border-slate-200/80">
+                  Lugar, área de trabajo o persona responsable del resguardo
+                </div>
+              </div>
+
+              {/* 3. CUÁNDO REGRESA */}
+              <div className="space-y-4 p-4 sm:p-5 rounded-2xl bg-slate-50/70 border border-slate-200 flex flex-col justify-between">
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="h-7 w-7 rounded-xl bg-indigo-600 text-white font-mono font-black text-xs flex items-center justify-center shadow-xs">
+                        3
+                      </span>
+                      <h4 className="text-xs sm:text-sm font-black text-slate-900">
+                        ¿Cuándo regresa?
+                      </h4>
+                    </div>
+                    <span className="text-[10px] font-mono font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full">
+                      1 Clic
+                    </span>
+                  </div>
+
+                  {/* Botones de Presets de 1 Clic */}
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setLoanDurationPreset('shift_end')}
+                      className={`p-2.5 rounded-xl text-xs font-bold transition flex flex-col items-center gap-0.5 cursor-pointer border ${
+                        loanDurationPreset === 'shift_end'
+                          ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                          : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200'
+                      }`}
+                    >
+                      <span className="flex items-center gap-1">
+                        <Zap className="h-3 w-3" />
+                        Hoy (Fin de Turno)
+                      </span>
+                      <span className={`text-[9px] font-mono ${loanDurationPreset === 'shift_end' ? 'text-indigo-200' : 'text-slate-400'}`}>
+                        Mismo día
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setLoanDurationPreset('tomorrow')}
+                      className={`p-2.5 rounded-xl text-xs font-bold transition flex flex-col items-center gap-0.5 cursor-pointer border ${
+                        loanDurationPreset === 'tomorrow'
+                          ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                          : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200'
+                      }`}
+                    >
+                      <span className="flex items-center gap-1">
+                        <Clock className="h-3 w-3" />
+                        Mañana
+                      </span>
+                      <span className={`text-[9px] font-mono ${loanDurationPreset === 'tomorrow' ? 'text-indigo-200' : 'text-slate-400'}`}>
+                        +24 horas
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setLoanDurationPreset('3days')}
+                      className={`p-2.5 rounded-xl text-xs font-bold transition flex flex-col items-center gap-0.5 cursor-pointer border ${
+                        loanDurationPreset === '3days'
+                          ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                          : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200'
+                      }`}
+                    >
+                      <span className="flex items-center gap-1">
+                        <Calendar className="h-3 w-3" />
+                        En 3 Días
+                      </span>
+                      <span className={`text-[9px] font-mono ${loanDurationPreset === '3days' ? 'text-indigo-200' : 'text-slate-400'}`}>
+                        +72 horas
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setLoanDurationPreset('1week')}
+                      className={`p-2.5 rounded-xl text-xs font-bold transition flex flex-col items-center gap-0.5 cursor-pointer border ${
+                        loanDurationPreset === '1week'
+                          ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                          : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200'
+                      }`}
+                    >
+                      <span className="flex items-center gap-1">
+                        <Calendar className="h-3 w-3" />
+                        1 Semana
+                      </span>
+                      <span className={`text-[9px] font-mono ${loanDurationPreset === '1week' ? 'text-indigo-200' : 'text-slate-400'}`}>
+                        +7 días
+                      </span>
+                    </button>
+                  </div>
+
+                  {/* Banner amigable con la fecha exacta calculada */}
+                  <div className="p-2.5 bg-indigo-50 border border-indigo-200 rounded-xl space-y-1">
+                    <span className="text-[10px] font-mono uppercase font-bold text-indigo-700 block">
+                      📅 Fecha en que regresa:
+                    </span>
+                    <span className="text-xs font-black text-indigo-950 block capitalize">
+                      {formatSpanishFriendlyDate(calculatedLoanReturnDate)}
+                    </span>
+                  </div>
+
+                  {/* Nota opcional */}
+                  <div>
+                    <input
+                      type="text"
+                      value={loanNotes}
+                      onChange={(e) => setLoanNotes(e.target.value)}
+                      placeholder="Nota opcional (ej. Reparación de compresor)..."
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-[11px] text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-3xs"
+                    />
+                  </div>
+                </div>
+
+                <div className="pt-2 text-[10px] text-slate-400 border-t border-slate-200/80">
+                  Fecha programada para la devolución al almacén
+                </div>
+              </div>
+
+            </div>
+
+            {/* BOTÓN DE ACCIÓN PRINCIPAL DIRECTO */}
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={handleExecuteToolLoan}
+                disabled={isLoanProcessing || !selectedLoanTool || !(loanDestination || loanTechnician)}
+                className="w-full py-4 px-6 bg-gradient-to-r from-blue-600 via-indigo-600 to-slate-900 hover:from-blue-700 hover:to-slate-800 disabled:opacity-40 text-white rounded-2xl text-sm font-black transition flex items-center justify-center gap-2 cursor-pointer shadow-lg disabled:cursor-not-allowed active:scale-98"
+              >
+                <Wrench className="h-5 w-5 text-blue-200" />
+                <span>REGISTRAR PRÉSTAMO DE HERRAMIENTA</span>
+                {selectedLoanTool && (loanDestination || loanTechnician) && (
+                  <span className="text-xs font-medium text-blue-200 ml-2 hidden sm:inline">
+                    ({selectedLoanTool.name} → {loanDestination || loanTechnician})
+                  </span>
+                )}
+              </button>
+            </div>
+
+          </div>
+
+          {/* ========================================================================= */}
+          {/* TABLERO DE CONTROL: HERRAMIENTAS PRESTADAS Y DEVOLUCIÓN RÁPIDA           */}
+          {/* ========================================================================= */}
+          <div className="bg-white p-5 sm:p-7 rounded-3xl border border-slate-200/90 shadow-xs space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-150">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="h-6 w-6 rounded-lg bg-emerald-500 text-white flex items-center justify-center font-bold text-xs">
+                    ✓
+                  </span>
+                  <h3 className="text-base sm:text-lg font-black text-slate-900 tracking-tight">
+                    Herramientas Prestadas ({activeLoansList.length})
+                  </h3>
+                </div>
+                <p className="text-xs text-slate-500">
+                  Visualice <strong>lo que se prestó</strong>, <strong>a dónde se fue</strong> y <strong>cuándo regresa</strong>. Devolución inmediata con 1 solo clic.
+                </p>
+              </div>
+
+              {activeLoansList.length > 0 && (
+                <div className="relative w-full sm:w-64">
+                  <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-slate-400" />
+                  <input
+                    type="text"
+                    value={activeLoanSearch}
+                    onChange={(e) => setActiveLoanSearch(e.target.value)}
+                    placeholder="Buscar por herramienta o destino..."
+                    className="w-full pl-9 pr-3 py-1.5 bg-slate-50 border border-slate-250 rounded-xl text-xs font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+              )}
+            </div>
+
+            {activeLoansList.length === 0 ? (
+              <div className="text-center py-12 px-4 rounded-2xl bg-emerald-50/50 border border-emerald-200/70 space-y-2">
+                <CheckCircle2 className="h-10 w-10 text-emerald-600 mx-auto" />
+                <h4 className="text-sm font-bold text-emerald-950">
+                  ¡Todas las herramientas están en resguardo en el almacén!
+                </h4>
+                <p className="text-xs text-emerald-800 max-w-md mx-auto">
+                  No hay préstamos activos pendientes en este momento. Utilice la ventanilla superior para registrar una herramienta que sale del almacén.
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-200 text-[10px] font-mono font-bold text-slate-400 uppercase tracking-wider">
+                      <th className="pb-3 text-left">Folio / Fecha</th>
+                      <th className="pb-3 text-left">1. Lo que se prestó</th>
+                      <th className="pb-3 text-left">Ubicación Origen</th>
+                      <th className="pb-3 text-left">2. A dónde se fue</th>
+                      <th className="pb-3 text-left">3. Cuándo regresa</th>
+                      <th className="pb-3 text-center">Estado</th>
+                      <th className="pb-3 text-right">Acción Devolución</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {filteredActiveLoans.map((loan) => {
+                      const todayStr = new Date().toISOString().slice(0, 10);
+                      const isOverdue = loan.expectedReturnDate && loan.expectedReturnDate < todayStr;
+                      const isTodayDue = loan.expectedReturnDate && loan.expectedReturnDate === todayStr;
+
+                      return (
+                        <tr key={loan.id} className="hover:bg-slate-50/80 transition">
+                          <td className="py-3 font-mono">
+                            <strong className="text-slate-900 block font-bold">{loan.id}</strong>
+                            <span className="text-[10px] text-slate-400">
+                              {new Date(loan.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </td>
+
+                          {/* 1. LO QUE SE PRESTÓ */}
+                          <td className="py-3">
+                            <div className="flex items-center gap-2">
+                              <div className="h-8 w-8 rounded-lg bg-blue-50 border border-blue-200 text-blue-700 flex items-center justify-center shrink-0">
+                                <Wrench className="h-4 w-4" />
+                              </div>
+                              <div>
+                                <strong className="text-slate-900 block font-bold leading-tight">
+                                  {loan.productName}
+                                </strong>
+                                <span className="font-mono text-[10px] text-amber-800 font-bold">
+                                  {loan.sku} • <span className="text-slate-700 font-black">{loan.qty} ud(s)</span>
+                                </span>
+                              </div>
+                            </div>
+                          </td>
+
+                          <td className="py-3 font-mono text-xs text-slate-700">
+                            <span className="bg-slate-100 px-2 py-1 rounded-md font-bold text-slate-800">
+                              {loan.originBins && loan.originBins.length > 0 ? loan.originBins.join(', ') : 'Estante Central'}
+                            </span>
+                          </td>
+
+                          {/* 2. A DÓNDE SE FUE */}
+                          <td className="py-3">
+                            <div className="flex items-center gap-2">
+                              <div className="h-7 w-7 rounded-lg bg-indigo-100 text-indigo-700 font-mono font-bold text-xs flex items-center justify-center shrink-0">
+                                <MapPin className="h-3.5 w-3.5" />
+                              </div>
+                              <div>
+                                <strong className="text-slate-900 block font-bold leading-tight">
+                                  {loan.destination || loan.borrowerName || 'Taller'}
+                                </strong>
+                                {loan.borrowerName && loan.destination !== loan.borrowerName && (
+                                  <span className="text-[10px] text-slate-500 font-medium block">
+                                    Resp: {loan.borrowerName}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+
+                          {/* 3. CUÁNDO REGRESA */}
+                          <td className="py-3 font-mono text-xs">
+                            <strong className="text-slate-800 block">
+                              {loan.expectedReturnDate || 'Fin de Turno'}
+                            </strong>
+                            <span className="text-[10px] text-slate-400">
+                              Entregó: {loan.operator}
+                            </span>
+                          </td>
+
+                          <td className="py-3 text-center">
+                            {isOverdue ? (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-mono font-black bg-rose-100 text-rose-800 border border-rose-200 animate-pulse">
+                                <AlertTriangle className="h-3 w-3 text-rose-600" />
+                                <span>Atrasado</span>
+                              </span>
+                            ) : isTodayDue ? (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-mono font-black bg-amber-100 text-amber-800 border border-amber-200">
+                                <Clock className="h-3 w-3 text-amber-600" />
+                                <span>Vence Hoy</span>
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-mono font-black bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+                                <span>Vigente</span>
+                              </span>
+                            )}
+                          </td>
+
+                          <td className="py-3 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleReturnLoan(loan.id)}
+                                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
+                                title="Reintegrar herramienta al almacén con 1 solo clic"
+                              >
+                                <CheckCircle2 className="h-3.5 w-3.5" />
+                                <span>Devolver (1 Clic)</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setLastDispatchRecord(loan);
+                                  setShowTicketModal(true);
+                                }}
+                                className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl transition cursor-pointer"
+                                title="Ver vale de resguardo"
+                              >
+                                <Printer className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* Mini Modal para Registrar Nuevo Técnico al Vuelo */}
+          {showAddTechModal && (
+            <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
+              <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-md w-full p-6 space-y-4 animate-scaleIn">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-150">
+                  <div className="flex items-center gap-2">
+                    <UserPlus className="h-5 w-5 text-blue-600" />
+                    <h3 className="text-base font-black text-slate-900">
+                      Registrar Nuevo Técnico
+                    </h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddTechModal(false)}
+                    className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                      Nombre Completo del Técnico:
+                    </label>
+                    <input
+                      type="text"
+                      value={newTechForm.name}
+                      onChange={(e) => setNewTechForm({ ...newTechForm, name: e.target.value })}
+                      placeholder="Ej. Roberto Morales Sánchez"
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                      Puesto / Especialidad:
+                    </label>
+                    <input
+                      type="text"
+                      value={newTechForm.role}
+                      onChange={(e) => setNewTechForm({ ...newTechForm, role: e.target.value })}
+                      placeholder="Ej. Mecánico Industrial, Soldador, Electricista..."
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                      Departamento o Cuadrilla:
+                    </label>
+                    <input
+                      type="text"
+                      value={newTechForm.dept}
+                      onChange={(e) => setNewTechForm({ ...newTechForm, dept: e.target.value })}
+                      placeholder="Ej. Mantenimiento, Planta 2, Obras..."
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-150">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddTechModal(false)}
+                    className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!newTechForm.name.trim()) return;
+                      handleSaveNewBorrowerToDb(newTechForm.name.trim(), newTechForm.dept.trim());
+                      setLoanTechnician(newTechForm.name.trim());
+                      setLoanDepartment(newTechForm.dept.trim() || newTechForm.role.trim());
+                      setShowAddTechModal(false);
+                      setNewTechForm({ name: '', role: 'Técnico de Mantenimiento', dept: 'Taller / Mantenimiento' });
+                    }}
+                    disabled={!newTechForm.name.trim()}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded-xl text-xs font-bold transition cursor-pointer shadow-xs"
+                  >
+                    Guardar y Seleccionar
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+        </div>
+      )}
+
+      {/* ========================================================================= */}
       {/* VISTA 1: SALIDA DIRECTA RÁPIDA (MAIN WORKFLOW)                             */}
       {/* ========================================================================= */}
       {activeView === 'express' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <div className="space-y-4">
+          {/* Banner de acceso directo a Préstamo de Herramientas */}
+          <div className="bg-gradient-to-r from-blue-50/90 to-indigo-50/80 border border-blue-200/90 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs shadow-3xs">
+            <div className="flex items-center gap-3">
+              <div className="h-9 w-9 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-2xs">
+                <Wrench className="h-5 w-5" />
+              </div>
+              <div>
+                <span className="font-bold text-blue-950 block text-xs sm:text-sm">¿Va a prestar herramienta o equipo a un técnico?</span>
+                <span className="text-[11px] text-blue-700">Utilice la nueva ventanilla simplificada: 3 clics para prestar y 1 clic para devolver.</span>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setActiveView('loans')}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-3xs shrink-0 self-end sm:self-auto"
+            >
+              <span>Ir a Préstamo de Herramientas →</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
 
           {/* COLUMNA IZQUIERDA: FORMULARIO DE 3 PASOS (8 de 12 columnas) */}
           <div className="lg:col-span-8 space-y-6">
@@ -1588,112 +2709,18 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
                 </div>
               )}
 
-              {/* SECCIÓN B: TRANSPORTE Y MEDIO DE ENTREGA */}
-              <div className="space-y-3 pt-3 border-t border-slate-150">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-black uppercase font-mono tracking-wider text-slate-800 flex items-center gap-1.5">
-                    <Truck className="h-4 w-4 text-indigo-600" />
-                    <span>Método de Transporte / Entrega</span>
-                  </label>
-                  <span className="text-[10px] text-slate-400 font-medium">
-                    Logística de traslado
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
-                  {deliveryOptions.map(opt => {
-                    const Icon = opt.icon;
-                    const isSelected = deliveryMethod === opt.id;
-                    return (
-                      <div
-                        key={opt.id}
-                        onClick={() => setDeliveryMethod(opt.id)}
-                        className={`p-3.5 rounded-2xl border transition cursor-pointer flex flex-col justify-between gap-2 ${
-                          isSelected
-                            ? 'bg-indigo-50/70 border-indigo-400 text-indigo-950 shadow-2xs ring-1 ring-indigo-400'
-                            : 'bg-slate-50/50 hover:bg-slate-50 border-slate-200 text-slate-700'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between">
-                          <div className={`h-8 w-8 rounded-xl flex items-center justify-center ${
-                            isSelected ? 'bg-indigo-600 text-white' : 'bg-white text-slate-500 border border-slate-200'
-                          }`}>
-                            <Icon className="h-4 w-4" />
-                          </div>
-                          <span className={`text-[9px] font-mono font-bold px-2 py-0.5 rounded-full ${
-                            isSelected ? 'bg-indigo-200/80 text-indigo-900' : 'bg-slate-100 text-slate-500'
-                          }`}>
-                            {opt.badge}
-                          </span>
-                        </div>
-
-                        <div>
-                          <h5 className="text-xs font-bold leading-tight">
-                            {opt.label}
-                          </h5>
-                          <p className="text-[10px] text-slate-400 leading-snug mt-0.5">
-                            {opt.desc}
-                          </p>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* Input interactivo si se selecciona 'Otro Medio de Entrega' */}
-                {deliveryMethod === '__OTHER__' && (
-                  <div className="p-3 bg-indigo-50/90 border-2 border-indigo-300 rounded-2xl space-y-1.5 animate-fadeIn">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-mono font-black uppercase text-indigo-900 tracking-wider">
-                        ✏️ ¿De qué se trata el medio de entrega? (especifique):
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setDeliveryMethod('Reparto Local (Unidad Propia)')}
-                        className="text-[10px] text-slate-400 hover:text-slate-600 font-bold cursor-pointer"
-                      >
-                        ✕ Cancelar
-                      </button>
-                    </div>
-                    <input
-                      type="text"
-                      value={customDeliveryMethodText}
-                      onChange={(e) => setCustomDeliveryMethodText(e.target.value)}
-                      placeholder="Ej. Transporte de personal, Flete tercerizado, Taxi de carga..."
-                      className="w-full px-3.5 py-2 bg-white border border-indigo-300 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                      required
-                    />
-                  </div>
-                )}
-
-                {/* Campos opcionales: Guía y Notas */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-                  <div>
-                    <label className="text-[11px] font-bold text-slate-600 block mb-1">
-                      Número de Guía / Placas (Opcional):
-                    </label>
-                    <input
-                      type="text"
-                      value={trackingNumber}
-                      onChange={(e) => setTrackingNumber(e.target.value)}
-                      placeholder="Ej. FEDEX-98765432 o Placas ABC-123..."
-                      className="w-full px-3.5 py-2 bg-slate-50 border border-slate-250 rounded-xl text-xs font-mono font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-[11px] font-bold text-slate-600 block mb-1">
-                      Instrucciones / Notas (Opcional):
-                    </label>
-                    <input
-                      type="text"
-                      value={notes}
-                      onChange={(e) => setNotes(e.target.value)}
-                      placeholder="Ej. Entregar en rampa 2, material frágil..."
-                      className="w-full px-3.5 py-2 bg-slate-50 border border-slate-250 rounded-xl text-xs font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    />
-                  </div>
-                </div>
+              {/* NOTAS E INSTRUCCIONES DE SALIDA (TRANSPORTE OCULTADO) */}
+              <div className="pt-3 border-t border-slate-150">
+                <label className="text-[11px] font-bold text-slate-600 block mb-1">
+                  Instrucciones / Notas del Despacho (Opcional):
+                </label>
+                <input
+                  type="text"
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  placeholder="Ej. Entregar en rampa 2, material frágil, turno vespertino..."
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-250 rounded-xl text-xs font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs"
+                />
               </div>
 
             </div>
@@ -1788,16 +2815,6 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
                   </span>
                 </div>
 
-                {/* Transporte */}
-                <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-1">
-                  <span className="text-[10px] font-mono uppercase font-bold text-slate-400 block">
-                    Medio de Entrega:
-                  </span>
-                  <span className="font-bold text-slate-900 block truncate">
-                    {deliveryMethod === '__OTHER__' ? (customDeliveryMethodText || 'Otro') : deliveryMethod}
-                  </span>
-                </div>
-
                 {/* Operador responsable */}
                 <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200/80 flex items-center justify-between">
                   <span className="text-[10px] font-mono uppercase font-bold text-slate-400">
@@ -1841,6 +2858,7 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
 
           </div>
 
+          </div>
         </div>
       )}
 
@@ -1900,7 +2918,6 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
                     <th className="pb-3 text-center">Cant.</th>
                     <th className="pb-3 text-left">Celdas de Picking</th>
                     <th className="pb-3 text-left">Destino / Prestatario</th>
-                    <th className="pb-3 text-left">Medio de Entrega</th>
                     <th className="pb-3 text-left">Operador / Estado</th>
                     <th className="pb-3 text-right">Comprobante</th>
                   </tr>
@@ -1982,17 +2999,6 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
                           <div className="text-[9px] text-slate-400 font-mono">
                             Retorno est.: {rec.expectedReturnDate}
                           </div>
-                        )}
-                      </td>
-
-                      <td className="py-3 text-slate-600">
-                        <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md text-[10px] font-semibold">
-                          {rec.deliveryMethod}
-                        </span>
-                        {rec.trackingNumber && (
-                          <span className="block font-mono text-[9px] text-slate-400 mt-0.5">
-                            Guía: {rec.trackingNumber}
-                          </span>
                         )}
                       </td>
 
@@ -2374,16 +3380,6 @@ export const DirectDispatchManager: React.FC<DirectDispatchManagerProps> = ({
                   <span className="text-slate-500 font-medium">Destino / Ubicación:</span>
                   <strong className="text-slate-900 text-right">{lastDispatchRecord.destination}</strong>
                 </div>
-                <div className="flex justify-between items-baseline">
-                  <span className="text-slate-500 font-medium">Medio de Entrega:</span>
-                  <span className="font-bold text-slate-800 text-right">{lastDispatchRecord.deliveryMethod}</span>
-                </div>
-                {lastDispatchRecord.trackingNumber && (
-                  <div className="flex justify-between items-baseline">
-                    <span className="text-slate-500 font-medium">Guía / Referencia:</span>
-                    <span className="font-mono text-slate-700">{lastDispatchRecord.trackingNumber}</span>
-                  </div>
-                )}
                 <div className="flex justify-between items-baseline">
                   <span className="text-slate-500 font-medium">Operador de Almacén:</span>
                   <span className="font-mono font-bold text-slate-800">{lastDispatchRecord.operator}</span>

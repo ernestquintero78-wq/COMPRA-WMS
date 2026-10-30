@@ -1,5 +1,5 @@
-import React, { useState, useMemo } from 'react';
-import { Bin, InventoryItem } from '../types';
+import React, { useState, useMemo, useEffect } from 'react';
+import { Bin, InventoryItem, WarehouseSection } from '../types';
 import { 
   MapPin, 
   Search, 
@@ -23,7 +23,15 @@ import {
   Gauge,
   PieChart,
   ExternalLink,
-  Activity
+  Activity,
+  Building2,
+  Store,
+  Truck,
+  Filter,
+  SlidersHorizontal,
+  Sparkles,
+  Palette,
+  Tag
 } from 'lucide-react';
 import {
   WAREHOUSE_CONSTANTS,
@@ -33,6 +41,52 @@ import {
   createDefaultBinFromMeta,
   computeWarehouseStatistics
 } from '../lib/warehouseStructure';
+import {
+  getStoredWarehouseSections,
+  PRESET_COLORS
+} from './WarehouseSectionManager';
+
+/**
+ * Helper to resolve the assigned segment for a location, with realistic fallback defaults:
+ * Rack 1-2: OXXO (Crimson #e11d48)
+ * Rack 3-4: Maseca (Green #16a34a)
+ * Rack 5-6: Transporte (Blue #0284c7)
+ */
+export function resolveBinSegment(
+  bin: Bin | undefined,
+  meta: StandardLocationMeta | null,
+  segments: WarehouseSection[]
+): { id: string; name: string; color: string; code: string } | null {
+  // If explicitly assigned on bin
+  if (bin?.segmentId) {
+    if (bin.segmentId === 'UNASSIGNED') return null;
+    const found = segments.find(s => s.id === bin.segmentId);
+    if (found) {
+      return { id: found.id, name: found.name, color: found.color, code: found.code };
+    }
+    return {
+      id: bin.segmentId,
+      name: bin.segmentName || bin.segmentId,
+      color: bin.segmentColor || '#64748b',
+      code: bin.segmentName ? bin.segmentName.substring(0, 6).toUpperCase() : 'SEG'
+    };
+  }
+
+  // Fallback default assignment based on rack number to give an immediate vivid physical segmentation
+  const rackNum = meta?.rackNum || (bin?.rack ? parseInt(bin.rack.replace(/\D/g, ''), 10) : 1);
+  if (rackNum === 1 || rackNum === 2) {
+    const oxxo = segments.find(s => s.id === 'wh-oxxo') || segments.find(s => s.code === 'OXXO');
+    if (oxxo) return { id: oxxo.id, name: 'Almacén OXXO', color: oxxo.color || '#e11d48', code: 'OXXO' };
+  } else if (rackNum === 3 || rackNum === 4) {
+    const maseca = segments.find(s => s.id === 'wh-maseca') || segments.find(s => s.code === 'MASECA');
+    if (maseca) return { id: maseca.id, name: 'Almacén Maseca', color: maseca.color || '#16a34a', code: 'MASECA' };
+  } else if (rackNum === 5 || rackNum === 6) {
+    const trans = segments.find(s => s.id === 'wh-trans') || segments.find(s => s.code === 'TRANS');
+    if (trans) return { id: trans.id, name: 'Almacén Transporte', color: trans.color || '#0284c7', code: 'TRANS' };
+  }
+  
+  return null;
+}
 
 interface WarehouseMapProps {
   bins: Bin[];
@@ -95,11 +149,126 @@ export const WarehouseMap: React.FC<WarehouseMapProps> = ({
   const [addStatusMsg, setAddStatusMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
   const [isAdding, setIsAdding] = useState(false);
 
+  // SEGMENTACIÓN DE ESPACIO FÍSICO POR ALMACÉN (Maseca, OXXO, Transporte, etc.)
+  const [warehouseSections, setWarehouseSections] = useState<WarehouseSection[]>(() => getStoredWarehouseSections());
+  const [selectedSegmentFilter, setSelectedSegmentFilter] = useState<string>('ALL'); // 'ALL' | 'UNASSIGNED' | segmentId
+  const [showNewSegmentModal, setShowNewSegmentModal] = useState(false);
+  const [showBulkAssignModal, setShowBulkAssignModal] = useState(false);
+
+  // Form State: Dar de Alta Nuevo Almacén / Segmento
+  const [newSegName, setNewSegName] = useState('');
+  const [newSegCode, setNewSegCode] = useState('');
+  const [newSegType, setNewSegType] = useState('Industrial / Alimentos');
+  const [newSegColor, setNewSegColor] = useState('#16a34a'); // Default Emerald (Maseca)
+  const [newSegDesc, setNewSegDesc] = useState('');
+  const [newSegLocation, setNewSegLocation] = useState('');
+  const [newSegManager, setNewSegManager] = useState('');
+  const [newSegInitialAssign, setNewSegInitialAssign] = useState<'NONE' | 'RACK' | 'FACE'>('RACK');
+  const [newSegStatusMsg, setNewSegStatusMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  const [isSavingSegment, setIsSavingSegment] = useState(false);
+
+  // Form State: Asignación Masiva por Segmento
+  const [bulkTargetSegmentId, setBulkTargetSegmentId] = useState<string>('wh-maseca');
+  const [bulkScopeType, setBulkScopeType] = useState<'RACK' | 'FACE' | 'AISLE' | 'LEVEL'>('RACK');
+  const [bulkTargetRack, setBulkTargetRack] = useState<number>(1);
+  const [bulkTargetFace, setBulkTargetFace] = useState<'Derecha' | 'Izquierda'>('Derecha');
+  const [bulkTargetAisle, setBulkTargetAisle] = useState<string>('A');
+  const [bulkTargetLevel, setBulkTargetLevel] = useState<number>(1);
+  const [bulkStatusMsg, setBulkStatusMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  const [isBulkAssigning, setIsBulkAssigning] = useState(false);
+
+  // Reactive listener for warehouse sections changes across the platform
+  useEffect(() => {
+    const handleSync = () => {
+      setWarehouseSections(getStoredWarehouseSections());
+    };
+    window.addEventListener('warehouse_sections_updated', handleSync);
+    window.addEventListener('storage', handleSync);
+    return () => {
+      window.removeEventListener('warehouse_sections_updated', handleSync);
+      window.removeEventListener('storage', handleSync);
+    };
+  }, []);
+
   // Fast lookup maps
   const binsMap = useMemo(() => new Map<string, Bin>(bins.map(b => [b.id, b])), [bins]);
   const inventoryMap = useMemo(() => new Map<string, InventoryItem>(inventory.map(i => [i.sku, i])), [inventory]);
   const stats = useMemo(() => computeWarehouseStatistics(bins), [bins]);
   const allStandardLocations = useMemo(() => generateAllStandardLocations(), []);
+
+  // Memoized resolution of each bin's segment
+  const binSegmentMap = useMemo(() => {
+    const map = new Map<string, { id: string; name: string; color: string; code: string } | null>();
+    bins.forEach(bin => {
+      const seg = resolveBinSegment(bin, null, warehouseSections);
+      map.set(bin.id, seg);
+    });
+    return map;
+  }, [bins, warehouseSections]);
+
+  const getLocSegment = (locId: string, meta?: StandardLocationMeta | null) => {
+    const fromMap = binSegmentMap.get(locId);
+    if (fromMap) return fromMap;
+    const bin = binsMap.get(locId);
+    const m = meta || parseLocationId(locId, bin);
+    return resolveBinSegment(bin, m, warehouseSections);
+  };
+
+  // Precalculated metrics per warehouse segment for color-coded visual tracking
+  const segmentMetrics = useMemo(() => {
+    const metrics: Record<string, {
+      id: string;
+      name: string;
+      code: string;
+      color: string;
+      totalCells: number;
+      occupiedCells: number;
+      emptyCells: number;
+      totalCapacityKg: number;
+      occupancyPct: number;
+    }> = {};
+
+    warehouseSections.forEach(s => {
+      metrics[s.id] = {
+        id: s.id,
+        name: s.name,
+        code: s.code,
+        color: s.color,
+        totalCells: 0,
+        occupiedCells: 0,
+        emptyCells: 0,
+        totalCapacityKg: 0,
+        occupancyPct: 0
+      };
+    });
+
+    let unassignedCount = 0;
+    let unassignedOccupied = 0;
+
+    bins.forEach(bin => {
+      const seg = binSegmentMap.get(bin.id);
+      const isOccupied = bin.occupiedQty > 0 || Boolean(bin.occupiedSku);
+      if (seg && metrics[seg.id]) {
+        metrics[seg.id].totalCells++;
+        metrics[seg.id].totalCapacityKg += bin.maxWeight || 500;
+        if (isOccupied) metrics[seg.id].occupiedCells++;
+        else metrics[seg.id].emptyCells++;
+      } else {
+        unassignedCount++;
+        if (isOccupied) unassignedOccupied++;
+      }
+    });
+
+    Object.values(metrics).forEach(m => {
+      m.occupancyPct = m.totalCells > 0 ? Math.round((m.occupiedCells / m.totalCells) * 100) : 0;
+    });
+
+    return {
+      bySegment: metrics,
+      unassignedCount,
+      unassignedOccupied
+    };
+  }, [bins, warehouseSections, binSegmentMap]);
 
   // Dynamically compute all available racks from both standard rules AND existing bins!
   const availableRacks = useMemo(() => {
@@ -513,6 +682,250 @@ export const WarehouseMap: React.FC<WarehouseMapProps> = ({
     onSelectBin(null);
   };
 
+  // DAR DE ALTA NUEVO ALMACÉN / SEGMENTO DE ALMACENAMIENTO
+  const handleCreateNewSegment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newSegName.trim() || !newSegCode.trim()) {
+      setNewSegStatusMsg({ type: 'err', text: 'Por favor ingrese el nombre y código del almacén.' });
+      return;
+    }
+
+    setIsSavingSegment(true);
+    setNewSegStatusMsg(null);
+
+    try {
+      const codeClean = newSegCode.trim().toUpperCase().replace(/[^A-Z0-9-]/g, '');
+      const idClean = `wh-${codeClean.toLowerCase()}-${Date.now().toString().slice(-4)}`;
+
+      const newSection: WarehouseSection = {
+        id: idClean,
+        code: codeClean,
+        name: newSegName.trim(),
+        sectionType: newSegType,
+        description: newSegDesc.trim() || `Almacén segmentado para ${newSegName.trim()}`,
+        facilityLocation: newSegLocation.trim() || 'Nave Principal WMS',
+        managerName: newSegManager.trim() || 'Operador Encargado',
+        contactEmail: '',
+        contactPhone: '',
+        color: newSegColor,
+        status: 'Activo',
+        createdAt: new Date().toISOString(),
+        categories: [newSegType],
+        subWarehouses: []
+      };
+
+      // Save to localStorage
+      const currentSections = getStoredWarehouseSections();
+      const nextSections = [...currentSections, newSection];
+      localStorage.setItem('wms_warehouse_sections_v2', JSON.stringify(nextSections));
+      setWarehouseSections(nextSections);
+      window.dispatchEvent(new Event('warehouse_sections_updated'));
+
+      // If initial allocation was chosen:
+      if (newSegInitialAssign !== 'NONE' && onUpdateBins) {
+        const updatedBinsMap = new Map<string, Bin>(bins.map(b => [b.id, { ...b }]));
+        let assignedCount = 0;
+
+        bins.forEach(b => {
+          const bRack = parseInt(b.rack.replace(/\D/g, ''), 10);
+          let matches = false;
+          if (newSegInitialAssign === 'RACK') {
+            matches = bRack === activeRack;
+          } else if (newSegInitialAssign === 'FACE') {
+            matches = bRack === activeRack && b.shelf.includes(activeFace);
+          }
+          if (matches) {
+            const current = updatedBinsMap.get(b.id)!;
+            current.segmentId = newSection.id;
+            current.segmentName = newSection.name;
+            current.segmentColor = newSection.color;
+            assignedCount++;
+          }
+        });
+
+        if (assignedCount > 0) {
+          const newBins = Array.from(updatedBinsMap.values());
+          await onUpdateBins(
+            newBins,
+            `Alta y Asignación de Almacén ${newSection.code}`,
+            `Se dio de alta el almacén ${newSection.name} y se le asignaron ${assignedCount} celdas en Rack ${activeRack}.`
+          );
+        }
+      }
+
+      setNewSegStatusMsg({
+        type: 'ok',
+        text: `✓ ¡Almacén "${newSection.name}" dado de alta con éxito con código de color ${newSection.color}!`
+      });
+
+      // Filter to new segment to see it immediately
+      setSelectedSegmentFilter(newSection.id);
+
+      setTimeout(() => {
+        setShowNewSegmentModal(false);
+        setNewSegStatusMsg(null);
+        setNewSegName('');
+        setNewSegCode('');
+        setNewSegDesc('');
+        setNewSegLocation('');
+        setNewSegManager('');
+      }, 1500);
+
+    } catch (err: any) {
+      setNewSegStatusMsg({ type: 'err', text: err.message || 'Error al dar de alta el almacén.' });
+    } finally {
+      setIsSavingSegment(false);
+    }
+  };
+
+  // ASIGNACIÓN MASIVA DE ESPACIO FÍSICO POR SEGMENTO
+  const handleApplyBulkAssignment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isReadOnly) {
+      setBulkStatusMsg({ type: 'err', text: 'Permiso denegado: modo solo lectura.' });
+      return;
+    }
+    if (!onUpdateBins) {
+      setBulkStatusMsg({ type: 'err', text: 'Error: función de actualización no disponible.' });
+      return;
+    }
+
+    const targetSeg = warehouseSections.find(s => s.id === bulkTargetSegmentId);
+    if (!targetSeg && bulkTargetSegmentId !== 'UNASSIGNED') {
+      setBulkStatusMsg({ type: 'err', text: 'Seleccione un almacén de destino válido.' });
+      return;
+    }
+
+    setIsBulkAssigning(true);
+    setBulkStatusMsg(null);
+
+    try {
+      const updatedBinsMap = new Map<string, Bin>(bins.map(b => [b.id, { ...b }]));
+      let affectedCount = 0;
+
+      bins.forEach(b => {
+        let matches = false;
+        const bRack = parseInt(b.rack.replace(/\D/g, ''), 10);
+        if (bulkScopeType === 'RACK') {
+          matches = bRack === bulkTargetRack;
+        } else if (bulkScopeType === 'FACE') {
+          matches = bRack === bulkTargetRack && b.shelf.includes(bulkTargetFace);
+        } else if (bulkScopeType === 'AISLE') {
+          matches = b.aisle === bulkTargetAisle;
+        } else if (bulkScopeType === 'LEVEL') {
+          matches = bRack === bulkTargetRack && b.level === String(bulkTargetLevel).padStart(2, '0');
+        }
+
+        if (matches) {
+          const current = updatedBinsMap.get(b.id)!;
+          if (bulkTargetSegmentId === 'UNASSIGNED') {
+            current.segmentId = 'UNASSIGNED';
+            current.segmentName = undefined;
+            current.segmentColor = undefined;
+          } else {
+            current.segmentId = targetSeg!.id;
+            current.segmentName = targetSeg!.name;
+            current.segmentColor = targetSeg!.color;
+          }
+          affectedCount++;
+        }
+      });
+
+      if (affectedCount === 0) {
+        throw new Error('No se encontraron celdas en el alcance seleccionado para asignar.');
+      }
+
+      const newBins = Array.from(updatedBinsMap.values());
+      const segLabel = bulkTargetSegmentId === 'UNASSIGNED' ? 'Sin Asignar (General)' : targetSeg!.name;
+      await onUpdateBins(
+        newBins,
+        `Asignación Masiva: ${segLabel}`,
+        `Se asignaron ${affectedCount} celdas del almacén físico a ${segLabel}.`
+      );
+
+      setBulkStatusMsg({
+        type: 'ok',
+        text: `✓ ¡Asignación completada! ${affectedCount} celdas ahora pertenecen a "${segLabel}".`
+      });
+
+      setTimeout(() => {
+        setShowBulkAssignModal(false);
+        setBulkStatusMsg(null);
+      }, 1500);
+    } catch (err: any) {
+      setBulkStatusMsg({ type: 'err', text: err.message || 'Error al aplicar asignación.' });
+    } finally {
+      setIsBulkAssigning(false);
+    }
+  };
+
+  // ASIGNAR UNA SOLA CELDA A UN SEGMENTO DESDE EL INSPECTOR
+  const handleAssignSingleCellSegment = async (binToUpdate: Bin, segmentId: string) => {
+    if (isReadOnly || !onUpdateBins) return;
+    const targetSeg = warehouseSections.find(s => s.id === segmentId);
+    
+    const updatedBins = bins.map(b => {
+      if (b.id === binToUpdate.id) {
+        if (segmentId === 'UNASSIGNED') {
+          return {
+            ...b,
+            segmentId: 'UNASSIGNED',
+            segmentName: undefined,
+            segmentColor: undefined
+          };
+        }
+        return {
+          ...b,
+          segmentId: targetSeg?.id,
+          segmentName: targetSeg?.name,
+          segmentColor: targetSeg?.color
+        };
+      }
+      return b;
+    });
+
+    const targetLabel = segmentId === 'UNASSIGNED' ? 'Sin Asignar' : targetSeg?.name || segmentId;
+    await onUpdateBins(
+      updatedBins,
+      `Reasignar Celda ${binToUpdate.id}`,
+      `Se cambió la celda ${binToUpdate.id} al segmento ${targetLabel}.`
+    );
+
+    const updated = updatedBins.find(b => b.id === binToUpdate.id);
+    if (updated) onSelectBin(updated);
+  };
+
+  // ASIGNAR TODO EL RACK O CARA AL SEGMENTO DESDE EL INSPECTOR
+  const handleAssignEntireRackToSegment = async (rackNum: number, segmentId: string) => {
+    if (isReadOnly || !onUpdateBins) return;
+    const targetSeg = warehouseSections.find(s => s.id === segmentId);
+    
+    let affected = 0;
+    const updatedBins = bins.map(b => {
+      const bRack = parseInt(b.rack.replace(/\D/g, ''), 10);
+      if (bRack === rackNum) {
+        affected++;
+        if (segmentId === 'UNASSIGNED') {
+          return { ...b, segmentId: 'UNASSIGNED', segmentName: undefined, segmentColor: undefined };
+        }
+        return { ...b, segmentId: targetSeg?.id, segmentName: targetSeg?.name, segmentColor: targetSeg?.color };
+      }
+      return b;
+    });
+
+    const targetLabel = segmentId === 'UNASSIGNED' ? 'Sin Asignar' : targetSeg?.name || segmentId;
+    await onUpdateBins(
+      updatedBins,
+      `Asignar Rack ${rackNum} a ${targetLabel}`,
+      `Se asignaron las ${affected} celdas del Rack ${rackNum} al almacén ${targetLabel}.`
+    );
+
+    if (selectedBin) {
+      const updated = updatedBins.find(b => b.id === selectedBin.id);
+      if (updated) onSelectBin(updated);
+    }
+  };
+
   return (
     <div className="space-y-4">
       
@@ -729,6 +1142,153 @@ export const WarehouseMap: React.FC<WarehouseMapProps> = ({
           </span>
         </div>
       </div>
+
+      {/* 2. BARRA DE SEGMENTACIÓN VISUAL POR ALMACÉN (Maseca, OXXO, Transporte, etc.) */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-4.5 shadow-xs space-y-3">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <span className="p-1.5 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200/80">
+              <Palette className="h-4 w-4" />
+            </span>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-black uppercase text-slate-800 tracking-wider font-mono">
+                  Segmentación de Almacenes y Espacios Físicos
+                </span>
+                <span className="text-[10px] font-bold px-2 py-0.2 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
+                  {warehouseSections.length} Almacenes Activos
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                Seguimiento visual por código de colores: Maseca, OXXO, Transporte y espacios personalizados.
+              </p>
+            </div>
+          </div>
+
+          {/* Acciones de Segmentación */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={() => {
+                setBulkStatusMsg(null);
+                setBulkTargetRack(activeRack);
+                setBulkTargetFace(activeFace);
+                setShowBulkAssignModal(true);
+              }}
+              disabled={isReadOnly}
+              className="px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-2xs active:scale-95"
+              title="Asignar masivamente un rack, cara o pasillo a un segmento"
+            >
+              <SlidersHorizontal className="h-3.5 w-3.5 text-indigo-600" />
+              <span>Asignación Masiva</span>
+            </button>
+
+            <button
+              onClick={() => {
+                setNewSegStatusMsg(null);
+                setNewSegName('');
+                setNewSegCode('');
+                setNewSegDesc('');
+                setNewSegColor('#16a34a');
+                setShowNewSegmentModal(true);
+              }}
+              disabled={isReadOnly}
+              className="px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer shadow-xs active:scale-95"
+              title="Dar de alta un nuevo almacén o espacio dedicado con su código de color"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              <span>+ Alta de Almacén / Segmento</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Píldoras de Filtro y Leyenda de Colores */}
+        <div className="flex items-center gap-2 overflow-x-auto pb-1 pt-0.5 flex-wrap">
+          <button
+            onClick={() => setSelectedSegmentFilter('ALL')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-2 border select-none ${
+              selectedSegmentFilter === 'ALL'
+                ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
+                : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200'
+            }`}
+          >
+            <span className="h-2 w-2 rounded-full bg-blue-500" />
+            <span>Todos los Almacenes</span>
+            <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${
+              selectedSegmentFilter === 'ALL' ? 'bg-slate-700 text-white' : 'bg-slate-200 text-slate-700'
+            }`}>
+              {bins.length} celdas
+            </span>
+          </button>
+
+          {/* Botones por Almacén / Segmento (Maseca, OXXO, Transporte, etc.) */}
+          {warehouseSections.map(sec => {
+            const m = segmentMetrics.bySegment[sec.id];
+            const cellCount = m?.totalCells || 0;
+            const occPct = m?.occupancyPct || 0;
+            const isSelected = selectedSegmentFilter === sec.id;
+            const shortName = sec.name.replace(/\(.*\)/, '').trim();
+
+            return (
+              <button
+                key={sec.id}
+                onClick={() => setSelectedSegmentFilter(isSelected ? 'ALL' : sec.id)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-2 border select-none ${
+                  isSelected
+                    ? 'ring-2 shadow-xs text-white'
+                    : 'bg-white hover:bg-slate-50 text-slate-800 border-slate-200'
+                }`}
+                style={{
+                  backgroundColor: isSelected ? sec.color : undefined,
+                  borderColor: isSelected ? sec.color : undefined,
+                }}
+                title={`${sec.name} - ${cellCount} celdas asignadas (${occPct}% ocupación)`}
+              >
+                <span 
+                  className="h-2.5 w-2.5 rounded-full shrink-0 shadow-2xs" 
+                  style={{ backgroundColor: isSelected ? '#ffffff' : sec.color }} 
+                />
+                <span className="truncate max-w-[150px]">{shortName}</span>
+                <span 
+                  className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${
+                    isSelected ? 'bg-black/25 text-white' : 'bg-slate-100 text-slate-700'
+                  }`}
+                >
+                  {cellCount} celdas {cellCount > 0 ? `(${occPct}%)` : ''}
+                </span>
+              </button>
+            );
+          })}
+
+          {/* Píldora para celdas sin asignar si existen */}
+          {segmentMetrics.unassignedCount > 0 && (
+            <button
+              onClick={() => setSelectedSegmentFilter(selectedSegmentFilter === 'UNASSIGNED' ? 'ALL' : 'UNASSIGNED')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-2 border select-none ${
+                selectedSegmentFilter === 'UNASSIGNED'
+                  ? 'bg-slate-700 text-white border-slate-700 shadow-xs'
+                  : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border-slate-200'
+              }`}
+            >
+              <span className="h-2 w-2 rounded-full bg-slate-400" />
+              <span>Sin Asignar</span>
+              <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-slate-200 text-slate-700">
+                {segmentMetrics.unassignedCount}
+              </span>
+            </button>
+          )}
+
+          {selectedSegmentFilter !== 'ALL' && (
+            <button
+              onClick={() => setSelectedSegmentFilter('ALL')}
+              className="text-[11px] text-blue-600 hover:text-blue-800 font-bold ml-1 cursor-pointer flex items-center gap-1 bg-blue-50 px-2 py-1 rounded-lg border border-blue-200"
+            >
+              <X className="h-3 w-3" />
+              <span>Mostrar Todo</span>
+            </button>
+          )}
+        </div>
+      </div>
+
       {activeTab === 'racks' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
           
@@ -858,6 +1418,13 @@ export const WarehouseMap: React.FC<WarehouseMapProps> = ({
                         const isSelected = selectedBin?.id === code;
                         const isOccupied = bin && (bin.occupiedQty > 0 || Boolean(bin.occupiedSku));
 
+                        const segInfo = getLocSegment(code, null);
+                        const matchesFilter = selectedSegmentFilter === 'ALL' ||
+                          (selectedSegmentFilter === 'UNASSIGNED' && !segInfo) ||
+                          (segInfo && segInfo.id === selectedSegmentFilter);
+                        const segColor = segInfo?.color || '#94a3b8';
+                        const segCode = segInfo?.code || '';
+
                         return (
                           <button
                             key={s}
@@ -870,21 +1437,40 @@ export const WarehouseMap: React.FC<WarehouseMapProps> = ({
                                 if (meta) onSelectBin(createDefaultBinFromMeta(meta));
                               }
                             }}
-                            className={`h-14 p-1 rounded-xl border text-center transition flex flex-col justify-between items-center cursor-pointer select-none active:scale-95 ${
+                            style={{
+                              borderTopColor: segInfo ? segColor : undefined,
+                              borderTopWidth: segInfo ? '3.5px' : undefined,
+                              backgroundColor: isSelected ? undefined : segInfo ? `${segColor}0d` : undefined
+                            }}
+                            className={`h-15 p-1 rounded-xl border text-center transition flex flex-col justify-between items-center cursor-pointer select-none active:scale-95 relative ${
                               isSelected
                                 ? 'bg-blue-600 text-white border-blue-700 ring-2 ring-blue-300 shadow-md scale-102 z-10'
                                 : isOccupied
                                   ? 'bg-amber-50 hover:bg-amber-100 text-amber-950 border-amber-300'
                                   : bin
-                                    ? 'bg-emerald-50/70 hover:bg-emerald-100 text-emerald-950 border-emerald-200'
+                                    ? 'hover:bg-slate-50 text-slate-900 border-slate-200'
                                     : 'bg-slate-100/60 border-dashed border-slate-300 hover:border-slate-400'
-                            }`}
+                            } ${!matchesFilter ? 'opacity-20 grayscale-75 hover:opacity-100' : ''}`}
                           >
-                            <span className={`font-mono font-black text-[10px] tracking-tight truncate w-full ${
-                              isSelected ? 'text-white' : 'text-slate-800'
-                            }`}>
-                              {code}
-                            </span>
+                            <div className="w-full flex items-center justify-between px-0.5">
+                              <span className={`font-mono font-black text-[9.5px] tracking-tight truncate ${
+                                isSelected ? 'text-white' : 'text-slate-800'
+                              }`}>
+                                {code}
+                              </span>
+                              {segInfo && (
+                                <span 
+                                  className="text-[7.5px] font-bold px-1 py-0.2 rounded font-mono uppercase tracking-tight shrink-0 truncate max-w-[42px]"
+                                  style={{ 
+                                    backgroundColor: isSelected ? 'rgba(255,255,255,0.25)' : `${segColor}25`, 
+                                    color: isSelected ? '#ffffff' : segColor 
+                                  }}
+                                  title={`Almacén: ${segInfo.name}`}
+                                >
+                                  {segCode}
+                                </span>
+                              )}
+                            </div>
 
                             <div className="w-full truncate">
                               {isOccupied ? (
@@ -1018,6 +1604,74 @@ export const WarehouseMap: React.FC<WarehouseMapProps> = ({
                   </div>
                 </div>
 
+                {/* Segmentación de Almacén Asignado */}
+                {(() => {
+                  const currentSeg = getLocSegment(selectedBin.id, selectedMeta);
+                  return (
+                    <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-3 text-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider flex items-center gap-1.5">
+                          <Palette className="h-3.5 w-3.5 text-indigo-600" />
+                          <span>Almacén / Segmento:</span>
+                        </span>
+                        {currentSeg && (
+                          <span
+                            className="text-[10px] font-bold px-2 py-0.5 rounded-full text-white flex items-center gap-1 shadow-2xs"
+                            style={{ backgroundColor: currentSeg.color }}
+                          >
+                            <span className="h-1.5 w-1.5 rounded-full bg-white" />
+                            <span>{currentSeg.code}</span>
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="bg-white p-3 rounded-lg border border-slate-200 space-y-2.5">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className="h-3.5 w-3.5 rounded-full shrink-0 shadow-2xs"
+                            style={{ backgroundColor: currentSeg?.color || '#94a3b8' }}
+                          />
+                          <span className="font-bold text-slate-800 text-xs truncate">
+                            {currentSeg?.name || 'General (Sin Segmentar)'}
+                          </span>
+                        </div>
+
+                        {!isReadOnly && (
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-500 block">
+                              Reasignar esta celda a otro almacén:
+                            </label>
+                            <select
+                              value={currentSeg?.id || 'UNASSIGNED'}
+                              onChange={(e) => handleAssignSingleCellSegment(selectedBin, e.target.value)}
+                              className="w-full text-xs p-2 font-bold border border-slate-200 rounded-lg bg-slate-50 focus:border-indigo-500 focus:outline-none cursor-pointer"
+                            >
+                              <option value="UNASSIGNED">-- General (Sin Asignar) --</option>
+                              {warehouseSections.map(s => (
+                                <option key={s.id} value={s.id}>
+                                  {s.name} ({s.code})
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Botón rápido para asignar todo el rack actual al segmento */}
+                      {!isReadOnly && currentSeg && (
+                        <button
+                          type="button"
+                          onClick={() => handleAssignEntireRackToSegment(Number(selectedMeta.rackNum), currentSeg.id)}
+                          className="w-full text-left py-2 px-2.5 rounded-lg border border-indigo-200 bg-indigo-50/70 hover:bg-indigo-100 text-indigo-800 text-[11px] font-bold transition flex items-center justify-between cursor-pointer"
+                        >
+                          <span>Asignar todo el Rack {selectedMeta.rackNum} a {currentSeg.name.replace(/\(.*\)/, '').trim()}</span>
+                          <ArrowRight className="h-3 w-3" />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })()}
+
                 {/* Delete button if bin exists in DB */}
                 {binsMap.has(selectedBin.id) && !isReadOnly && (
                   <button
@@ -1079,6 +1733,18 @@ export const WarehouseMap: React.FC<WarehouseMapProps> = ({
               const isSelected = activeRack === r;
               const hasTwoFaces = r !== 1;
 
+              // Compute segments present in this rack
+              const segMap = new Map<string, { code: string; name: string; color: string; count: number }>();
+              rackBins.forEach(b => {
+                const seg = binSegmentMap.get(b.id) || resolveBinSegment(b, null, warehouseSections);
+                if (seg) {
+                  const current = segMap.get(seg.id) || { code: seg.code, name: seg.name, color: seg.color, count: 0 };
+                  current.count++;
+                  segMap.set(seg.id, current);
+                }
+              });
+              const rackSegments = Array.from(segMap.values());
+
               return (
                 <div
                   key={r}
@@ -1102,6 +1768,21 @@ export const WarehouseMap: React.FC<WarehouseMapProps> = ({
                     <span className="text-[10px] text-slate-400 block mt-1">
                       {hasTwoFaces ? 'Doble cara (Izq y Der)' : 'Cara única'}
                     </span>
+
+                    {/* Segment badges with colors */}
+                    <div className="flex items-center gap-1 flex-wrap mt-2">
+                      {rackSegments.map(rs => (
+                        <span
+                          key={rs.code}
+                          className="text-[9px] font-bold px-1.5 py-0.2 rounded font-mono text-white flex items-center gap-1 shadow-2xs"
+                          style={{ backgroundColor: rs.color }}
+                          title={`${rs.name}: ${rs.count} celdas`}
+                        >
+                          <span className="h-1 w-1 rounded-full bg-white" />
+                          <span>{rs.code}: {rs.count}</span>
+                        </span>
+                      ))}
+                    </div>
                   </div>
 
                   <div className="space-y-1.5 text-xs font-mono">
@@ -1113,11 +1794,20 @@ export const WarehouseMap: React.FC<WarehouseMapProps> = ({
                       <span className="text-slate-500">Libres:</span>
                       <span className="font-bold text-emerald-600">{totalCount - occupiedCount}</span>
                     </div>
-                    <div className="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden mt-1">
-                      <div 
-                        className="bg-blue-600 h-full rounded-full" 
-                        style={{ width: `${Math.round((occupiedCount / (totalCount || 1)) * 100)}%` }}
-                      />
+
+                    {/* Multi-color segment distribution bar */}
+                    <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden flex mt-1">
+                      {rackSegments.map(rs => (
+                        <div 
+                          key={rs.code}
+                          className="h-full transition-all" 
+                          style={{ 
+                            width: `${Math.round((rs.count / (totalCount || 1)) * 100)}%`,
+                            backgroundColor: rs.color 
+                          }}
+                          title={`${rs.name}: ${rs.count} celdas`}
+                        />
+                      ))}
                     </div>
                   </div>
 
@@ -1168,6 +1858,7 @@ export const WarehouseMap: React.FC<WarehouseMapProps> = ({
               <thead className="bg-slate-50 sticky top-0 text-[10px] text-slate-400 uppercase tracking-wider border-b border-slate-200">
                 <tr>
                   <th className="py-2.5 px-3">Código</th>
+                  <th className="py-2.5 px-3">Almacén / Segmento</th>
                   <th className="py-2.5 px-3">Pasillo</th>
                   <th className="py-2.5 px-3">Rack</th>
                   <th className="py-2.5 px-3">Cara</th>
@@ -1182,10 +1873,24 @@ export const WarehouseMap: React.FC<WarehouseMapProps> = ({
                   const bin = binsMap.get(loc.id);
                   const isOccupied = bin && (bin.occupiedQty > 0 || Boolean(bin.occupiedSku));
                   const rackNum = parseInt(loc.rackName.replace(/\D/g, ''), 10) || 1;
+                  const seg = getLocSegment(loc.id, null);
 
                   return (
                     <tr key={loc.id} className="hover:bg-slate-50 transition">
                       <td className="py-2 px-3 font-black text-slate-900">{loc.id}</td>
+                      <td className="py-2 px-3">
+                        {seg ? (
+                          <span
+                            className="text-[9.5px] font-bold px-2 py-0.5 rounded-full text-white inline-flex items-center gap-1 shadow-2xs"
+                            style={{ backgroundColor: seg.color }}
+                          >
+                            <span className="h-1.5 w-1.5 rounded-full bg-white" />
+                            <span>{seg.name.replace(/\(.*\)/, '').trim()}</span>
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-slate-400 font-mono">General</span>
+                        )}
+                      </td>
                       <td className="py-2 px-3 text-slate-700">Pasillo {loc.aisle}</td>
                       <td className="py-2 px-3 text-slate-700">{loc.rackName}</td>
                       <td className="py-2 px-3 text-slate-600">Cara {loc.face}</td>
@@ -1370,6 +2075,113 @@ export const WarehouseMap: React.FC<WarehouseMapProps> = ({
                   {stats.totalItemsQuantity} uds
                 </span>
               </div>
+            </div>
+          </div>
+
+          {/* Sección: Segmentación de Espacio Físico por Almacén (Con Código de Colores) */}
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+              <div>
+                <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                  <Palette className="h-4 w-4 text-emerald-600" />
+                  <span>Distribución y Ocupación por Almacén / Segmento ({warehouseSections.length} Almacenes)</span>
+                </h4>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Capacidad de celdas, tonelaje y tasa de ocupación física diferenciado por código de color.
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setNewSegStatusMsg(null);
+                  setNewSegName('');
+                  setNewSegCode('');
+                  setShowNewSegmentModal(true);
+                }}
+                className="px-3 py-1 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200 text-xs font-bold hover:bg-indigo-100 cursor-pointer flex items-center gap-1.5 self-start sm:self-auto"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                <span>+ Nuevo Almacén</span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              {warehouseSections.map(sec => {
+                const m = segmentMetrics.bySegment[sec.id];
+                const totalCells = m?.totalCells || 0;
+                const occ = m?.occupiedCells || 0;
+                const pct = m?.occupancyPct || 0;
+                const capTon = ((m?.totalCapacityKg || 0) / 1000).toFixed(1);
+                const pctOfWarehouse = bins.length > 0 ? Math.round((totalCells / bins.length) * 100) : 0;
+
+                return (
+                  <div
+                    key={sec.id}
+                    className="p-4 rounded-2xl border transition flex flex-col justify-between gap-3 shadow-2xs hover:shadow-md bg-white group"
+                    style={{ borderTopColor: sec.color, borderTopWidth: '4px' }}
+                  >
+                    <div>
+                      <div className="flex justify-between items-start gap-2">
+                        <div>
+                          <span className="font-bold text-slate-900 text-sm block group-hover:text-blue-600 transition truncate max-w-[180px]">
+                            {sec.name}
+                          </span>
+                          <span className="text-[10px] text-slate-400 font-mono block mt-0.5">
+                            {sec.sectionType}
+                          </span>
+                        </div>
+                        <span
+                          className="text-[9px] font-bold px-2 py-0.5 rounded-full text-white font-mono shrink-0 shadow-2xs"
+                          style={{ backgroundColor: sec.color }}
+                        >
+                          {sec.code}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 mt-3 pt-3 border-t border-slate-100 text-xs font-mono">
+                        <div className="bg-slate-50 p-2 rounded-lg">
+                          <span className="text-[9px] text-slate-400 uppercase font-bold block">Celdas</span>
+                          <span className="font-black text-slate-800 text-sm">{totalCells}</span>
+                          <span className="text-[9px] text-slate-500 block">({pctOfWarehouse}% total)</span>
+                        </div>
+                        <div className="bg-slate-50 p-2 rounded-lg">
+                          <span className="text-[9px] text-slate-400 uppercase font-bold block">Carga Máx</span>
+                          <span className="font-black text-slate-800 text-sm">{capTon} T</span>
+                          <span className="text-[9px] text-slate-500 block">Capacidad</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2 pt-2 border-t border-slate-100">
+                      <div className="flex justify-between items-center text-xs font-mono">
+                        <span className="text-slate-500 text-[11px]">Ocupación:</span>
+                        <span className="font-bold text-slate-800 text-[11px]">{occ} de {totalCells} ({pct}%)</span>
+                      </div>
+
+                      <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
+                        <div
+                          className="h-full rounded-full transition-all"
+                          style={{
+                            width: `${pct}%`,
+                            backgroundColor: sec.color
+                          }}
+                        />
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedSegmentFilter(sec.id);
+                          setActiveTab('racks');
+                        }}
+                        className="w-full text-center py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold text-xs transition flex items-center justify-center gap-1 cursor-pointer"
+                      >
+                        <span>Ver Celdas en Mapa</span>
+                        <ArrowRight className="h-3 w-3" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
 
@@ -2059,6 +2871,489 @@ export const WarehouseMap: React.FC<WarehouseMapProps> = ({
               </button>
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* 7. MODAL: DAR DE ALTA NUEVO ALMACÉN O ESPACIO DE ALMACENAMIENTO */}
+      {showNewSegmentModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-fadeIn">
+          <div className="bg-white rounded-3xl max-w-xl w-full p-6 shadow-2xl border border-slate-150 space-y-4 max-h-[92vh] overflow-y-auto">
+            
+            <div className="flex items-start justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <span className="p-2 rounded-xl bg-indigo-50 text-indigo-700">
+                  <Building2 className="h-5 w-5" />
+                </span>
+                <div>
+                  <h3 className="text-base font-black text-slate-900">
+                    Dar de Alta Almacén o Espacio Físico
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Registre un nuevo almacén (ej. Maseca, OXXO, Transporte, etc.) con su código de color para seguimiento visual.
+                  </p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowNewSegmentModal(false)} 
+                className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateNewSegment} className="space-y-4">
+              
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="sm:col-span-2">
+                  <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">
+                    Nombre del Almacén / Espacio *
+                  </label>
+                  <input
+                    type="text"
+                    value={newSegName}
+                    onChange={(e) => setNewSegName(e.target.value)}
+                    placeholder="Ej. Almacén Maseca (Harinas), Almacén Bimbo, CEDIS Central..."
+                    className="w-full p-2.5 text-xs font-bold border border-slate-200 rounded-xl focus:border-indigo-500 focus:outline-none bg-slate-50"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">
+                    Código Corto / Etiqueta *
+                  </label>
+                  <input
+                    type="text"
+                    value={newSegCode}
+                    onChange={(e) => setNewSegCode(e.target.value.toUpperCase())}
+                    placeholder="Ej. MASECA, OXXO, BIMBO..."
+                    maxLength={10}
+                    className="w-full p-2.5 text-xs font-mono font-black uppercase border border-slate-200 rounded-xl focus:border-indigo-500 focus:outline-none bg-slate-50"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">
+                    Giro / Tipo de Almacenamiento
+                  </label>
+                  <select
+                    value={newSegType}
+                    onChange={(e) => setNewSegType(e.target.value)}
+                    className="w-full p-2.5 text-xs font-bold border border-slate-200 rounded-xl focus:border-indigo-500 focus:outline-none bg-slate-50 cursor-pointer"
+                  >
+                    <option value="Industrial / Alimentos">Industrial / Alimentos (Harinas, Granos)</option>
+                    <option value="Comercial / Tiendas">Comercial / Tiendas de Conveniencia</option>
+                    <option value="Transporte / Flota">Transporte / Flota y Refacciones</option>
+                    <option value="Construcción / Obra">Construcción / Materiales y Obra</option>
+                    <option value="Cámara Fría / Perecederos">Cámara Fría / Perecederos</option>
+                    <option value="General / Multiusos">General / Multiusos</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Selector de Color Visual */}
+              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] uppercase font-bold text-slate-600 flex items-center gap-1.5">
+                    <Palette className="h-3.5 w-3.5 text-indigo-600" />
+                    <span>Código de Color Visual para Mapa:</span>
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <span 
+                      className="h-4 w-4 rounded-full shadow-2xs border border-white" 
+                      style={{ backgroundColor: newSegColor }} 
+                    />
+                    <span className="font-mono text-xs font-bold text-slate-700">{newSegColor}</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  {[
+                    { hex: '#16a34a', label: 'Verde Maseca' },
+                    { hex: '#e11d48', label: 'Rojo OXXO' },
+                    { hex: '#0284c7', label: 'Azul Transporte' },
+                    { hex: '#d97706', label: 'Ámbar Construcción' },
+                    { hex: '#8b5cf6', label: 'Morado Industrial' },
+                    { hex: '#0d9488', label: 'Teal Especial' },
+                    { hex: '#f97316', label: 'Naranja Logística' },
+                    { hex: '#ec4899', label: 'Rosa Conveniencia' },
+                    { hex: '#4f46e5', label: 'Índigo Central' },
+                    { hex: '#475569', label: 'Pizarra Estándar' }
+                  ].map(c => (
+                    <button
+                      key={c.hex}
+                      type="button"
+                      onClick={() => setNewSegColor(c.hex)}
+                      className={`h-7 w-7 rounded-xl transition cursor-pointer border-2 flex items-center justify-center ${
+                        newSegColor === c.hex ? 'border-slate-900 scale-110 shadow-sm' : 'border-transparent hover:scale-105'
+                      }`}
+                      style={{ backgroundColor: c.hex }}
+                      title={c.label}
+                    >
+                      {newSegColor === c.hex && <Check className="h-3.5 w-3.5 text-white" />}
+                    </button>
+                  ))}
+                  
+                  {/* Selector nativo libre */}
+                  <div className="flex items-center gap-1.5 ml-2">
+                    <input
+                      type="color"
+                      value={newSegColor}
+                      onChange={(e) => setNewSegColor(e.target.value)}
+                      className="h-7 w-8 rounded-lg cursor-pointer border-0 bg-transparent"
+                      title="Elegir color personalizado"
+                    />
+                    <span className="text-[10px] text-slate-400">Personalizado</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">
+                    Ubicación en Nave / Planta
+                  </label>
+                  <input
+                    type="text"
+                    value={newSegLocation}
+                    onChange={(e) => setNewSegLocation(e.target.value)}
+                    placeholder="Ej. Nave Norte, Bahías 1 a 4..."
+                    className="w-full p-2.5 text-xs font-bold border border-slate-200 rounded-xl focus:border-indigo-500 focus:outline-none bg-slate-50"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">
+                    Responsable / Encargado
+                  </label>
+                  <input
+                    type="text"
+                    value={newSegManager}
+                    onChange={(e) => setNewSegManager(e.target.value)}
+                    placeholder="Ej. Ing. Carlos Villarreal"
+                    className="w-full p-2.5 text-xs font-bold border border-slate-200 rounded-xl focus:border-indigo-500 focus:outline-none bg-slate-50"
+                  />
+                </div>
+              </div>
+
+              {/* Asignación física inicial opcional */}
+              <div className="p-3 bg-indigo-50/70 border border-indigo-200/80 rounded-2xl space-y-2">
+                <span className="text-[10px] uppercase font-bold text-indigo-900 tracking-wider block">
+                  Asignación Física Inmediata en el Mapa:
+                </span>
+                <div className="space-y-1.5 text-xs font-medium text-slate-700">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="initialAssign"
+                      checked={newSegInitialAssign === 'RACK'}
+                      onChange={() => setNewSegInitialAssign('RACK')}
+                      className="text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <span>Asignar todo el <strong>Rack {activeRack}</strong> actual a este nuevo almacén</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="initialAssign"
+                      checked={newSegInitialAssign === 'FACE'}
+                      onChange={() => setNewSegInitialAssign('FACE')}
+                      className="text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <span>Asignar solo la <strong>Cara {activeFace}</strong> del Rack {activeRack}</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="initialAssign"
+                      checked={newSegInitialAssign === 'NONE'}
+                      onChange={() => setNewSegInitialAssign('NONE')}
+                      className="text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <span>Solo registrar almacén (asignar celdas manualmente o después)</span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Mensajes de Estado */}
+              {newSegStatusMsg && (
+                <div className={`p-3.5 rounded-xl border text-xs font-semibold flex items-center gap-2 ${
+                  newSegStatusMsg.type === 'ok'
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                    : 'bg-rose-50 border-rose-200 text-rose-800'
+                }`}>
+                  {newSegStatusMsg.type === 'ok' ? (
+                    <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                  ) : (
+                    <AlertTriangle className="h-4 w-4 text-rose-600 shrink-0" />
+                  )}
+                  <span>{newSegStatusMsg.text}</span>
+                </div>
+              )}
+
+              {/* Botones de Acción */}
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowNewSegmentModal(false)}
+                  disabled={isSavingSegment}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 border border-slate-200 hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingSegment || isReadOnly}
+                  className="px-5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white cursor-pointer shadow-xs flex items-center gap-2 active:scale-95"
+                >
+                  {isSavingSegment ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 animate-spin" />
+                      <span>Guardando...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="h-4 w-4" />
+                      <span>Dar de Alta Almacén</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 8. MODAL: ASIGNACIÓN MASIVA DE ESPACIO FÍSICO POR SEGMENTO */}
+      {showBulkAssignModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-fadeIn">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-150 space-y-4">
+            
+            <div className="flex items-start justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <span className="p-2 rounded-xl bg-indigo-50 text-indigo-700">
+                  <SlidersHorizontal className="h-5 w-5" />
+                </span>
+                <div>
+                  <h3 className="text-base font-black text-slate-900">
+                    Asignación Masiva de Espacio Físico
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Asigne un rack completo, cara o pasillo a Maseca, OXXO, Transporte o cualquier almacén.
+                  </p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowBulkAssignModal(false)} 
+                className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleApplyBulkAssignment} className="space-y-4">
+              
+              {/* Almacén Destino */}
+              <div>
+                <label className="block text-[10px] uppercase font-bold text-slate-600 mb-1">
+                  1. Seleccione Almacén / Segmento Destino:
+                </label>
+                <div className="grid grid-cols-1 gap-2">
+                  <select
+                    value={bulkTargetSegmentId}
+                    onChange={(e) => setBulkTargetSegmentId(e.target.value)}
+                    className="w-full p-2.5 text-xs font-bold border border-slate-200 rounded-xl focus:border-indigo-500 focus:outline-none bg-slate-50 cursor-pointer"
+                  >
+                    {warehouseSections.map(s => (
+                      <option key={s.id} value={s.id}>
+                        {s.name} ({s.code}) - {s.sectionType}
+                      </option>
+                    ))}
+                    <option value="UNASSIGNED">-- Sin Asignar (General / Libre) --</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Alcance de Asignación */}
+              <div className="space-y-2">
+                <label className="block text-[10px] uppercase font-bold text-slate-600">
+                  2. Alcance Físico de Asignación:
+                </label>
+
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setBulkScopeType('RACK')}
+                    className={`p-2.5 rounded-xl border text-left font-bold transition cursor-pointer flex flex-col justify-between ${
+                      bulkScopeType === 'RACK'
+                        ? 'bg-indigo-50 border-indigo-400 text-indigo-900 ring-2 ring-indigo-200'
+                        : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700'
+                    }`}
+                  >
+                    <span>Todo el Rack</span>
+                    <span className="text-[10px] text-slate-400 font-normal">Todas las caras y niveles</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setBulkScopeType('FACE')}
+                    className={`p-2.5 rounded-xl border text-left font-bold transition cursor-pointer flex flex-col justify-between ${
+                      bulkScopeType === 'FACE'
+                        ? 'bg-indigo-50 border-indigo-400 text-indigo-900 ring-2 ring-indigo-200'
+                        : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700'
+                    }`}
+                  >
+                    <span>Cara Específica</span>
+                    <span className="text-[10px] text-slate-400 font-normal">Solo Izquierda o Derecha</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setBulkScopeType('AISLE')}
+                    className={`p-2.5 rounded-xl border text-left font-bold transition cursor-pointer flex flex-col justify-between ${
+                      bulkScopeType === 'AISLE'
+                        ? 'bg-indigo-50 border-indigo-400 text-indigo-900 ring-2 ring-indigo-200'
+                        : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700'
+                    }`}
+                  >
+                    <span>Pasillo Completo</span>
+                    <span className="text-[10px] text-slate-400 font-normal">Todas las celdas del pasillo</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setBulkScopeType('LEVEL')}
+                    className={`p-2.5 rounded-xl border text-left font-bold transition cursor-pointer flex flex-col justify-between ${
+                      bulkScopeType === 'LEVEL'
+                        ? 'bg-indigo-50 border-indigo-400 text-indigo-900 ring-2 ring-indigo-200'
+                        : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700'
+                    }`}
+                  >
+                    <span>Nivel Vertical</span>
+                    <span className="text-[10px] text-slate-400 font-normal">Mismo nivel en todo el rack</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Selector de Parámetros según Alcance */}
+              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl grid grid-cols-2 gap-3 text-xs">
+                {(bulkScopeType === 'RACK' || bulkScopeType === 'FACE' || bulkScopeType === 'LEVEL') && (
+                  <div>
+                    <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">
+                      Rack Objetivo
+                    </label>
+                    <select
+                      value={bulkTargetRack}
+                      onChange={(e) => setBulkTargetRack(Number(e.target.value))}
+                      className="w-full p-2 text-xs font-mono font-bold border border-slate-200 rounded-lg bg-white"
+                    >
+                      {availableRacks.map(r => (
+                        <option key={r} value={r}>Rack {r}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {bulkScopeType === 'FACE' && (
+                  <div>
+                    <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">
+                      Cara del Rack
+                    </label>
+                    <select
+                      value={bulkTargetFace}
+                      onChange={(e) => setBulkTargetFace(e.target.value as any)}
+                      className="w-full p-2 text-xs font-bold border border-slate-200 rounded-lg bg-white"
+                    >
+                      <option value="Derecha">Cara Derecha</option>
+                      <option value="Izquierda">Cara Izquierda</option>
+                    </select>
+                  </div>
+                )}
+
+                {bulkScopeType === 'AISLE' && (
+                  <div className="col-span-2">
+                    <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">
+                      Pasillo
+                    </label>
+                    <select
+                      value={bulkTargetAisle}
+                      onChange={(e) => setBulkTargetAisle(e.target.value)}
+                      className="w-full p-2 text-xs font-mono font-bold border border-slate-200 rounded-lg bg-white"
+                    >
+                      {['A', 'B', 'C', 'D', 'E', 'F', 'G'].map(a => (
+                        <option key={a} value={a}>Pasillo {a}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {bulkScopeType === 'LEVEL' && (
+                  <div>
+                    <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">
+                      Nivel Vertical
+                    </label>
+                    <select
+                      value={bulkTargetLevel}
+                      onChange={(e) => setBulkTargetLevel(Number(e.target.value))}
+                      className="w-full p-2 text-xs font-mono font-bold border border-slate-200 rounded-lg bg-white"
+                    >
+                      {[1, 2, 3, 4, 5, 6, 7].map(l => (
+                        <option key={l} value={l}>Nivel 0{l} {l === 1 ? '(Piso)' : l === 7 ? '(Tope)' : ''}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              {/* Status Message */}
+              {bulkStatusMsg && (
+                <div className={`p-3.5 rounded-xl border text-xs font-semibold flex items-center gap-2 ${
+                  bulkStatusMsg.type === 'ok'
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                    : 'bg-rose-50 border-rose-200 text-rose-800'
+                }`}>
+                  {bulkStatusMsg.type === 'ok' ? (
+                    <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                  ) : (
+                    <AlertTriangle className="h-4 w-4 text-rose-600 shrink-0" />
+                  )}
+                  <span>{bulkStatusMsg.text}</span>
+                </div>
+              )}
+
+              {/* Botones */}
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowBulkAssignModal(false)}
+                  disabled={isBulkAssigning}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 border border-slate-200 hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isBulkAssigning || isReadOnly}
+                  className="px-5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white cursor-pointer shadow-xs flex items-center gap-2 active:scale-95"
+                >
+                  {isBulkAssigning ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 animate-spin" />
+                      <span>Asignando...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Check className="h-4 w-4" />
+                      <span>Aplicar Asignación</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+            </form>
           </div>
         </div>
       )}

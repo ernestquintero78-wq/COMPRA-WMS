@@ -200,7 +200,13 @@ export const InventoryManager: React.FC<InventoryProps> = ({
       setWarehouseSections(getStoredWarehouseSections());
     };
     window.addEventListener('wms_warehouses_updated', handleUpdate);
-    return () => window.removeEventListener('wms_warehouses_updated', handleUpdate);
+    window.addEventListener('warehouse_sections_updated', handleUpdate);
+    window.addEventListener('storage', handleUpdate);
+    return () => {
+      window.removeEventListener('wms_warehouses_updated', handleUpdate);
+      window.removeEventListener('warehouse_sections_updated', handleUpdate);
+      window.removeEventListener('storage', handleUpdate);
+    };
   }, []);
 
   // Superalmacén (Sección Principal: OXXO, Construcción, Transporte) y Almacén / Subalmacén para alta de SKU

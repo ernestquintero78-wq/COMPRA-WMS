@@ -30,6 +30,59 @@ import { WarehouseSection, SubWarehouse, PlatformTheme } from '../types';
 
 export const DEFAULT_WAREHOUSE_SECTIONS: WarehouseSection[] = [
   {
+    id: 'wh-maseca',
+    code: 'MASECA',
+    name: 'Almacén Maseca (Harinas y Graneles)',
+    sectionType: 'Industrial / Alimentos',
+    description: 'Centro de distribución y almacenaje de harinas de maíz nixtamalizado, sacos a granel, premezclas e insumos industriales Maseca.',
+    facilityLocation: 'Nave Norte - Módulo Harinero M1 a M4',
+    managerName: 'Ing. Carlos Villarreal',
+    contactEmail: 'cedis.maseca@gruma-wms.com',
+    contactPhone: '+52 (81) 8172-1000',
+    color: '#16a34a', // Emerald green
+    status: 'Activo',
+    createdAt: new Date().toISOString(),
+    categories: [
+      'Harinas de Maíz y Trigo',
+      'Sacos y Graneles',
+      'Insumos Industriales',
+      'Empaque y Encostalado',
+      'Premezclas Alimenticias'
+    ],
+    subWarehouses: [
+      {
+        id: 'sub-mas-01',
+        warehouseId: 'wh-maseca',
+        code: 'MAS-HAR',
+        name: 'Maseca - Harina de Maíz Nixtamalizado',
+        description: 'Tarimas de harina de maíz estándar, extrafina y nixtamalizada en sacos de 20kg y 50kg.',
+        storageType: 'Racks Estándar',
+        capacityBinsOrUnits: 1600,
+        currentOccupancy: 950,
+        locationArea: 'Pasillos C01 al C03 - Racks Harina',
+        responsibleOperator: 'Manuel Garza',
+        status: 'Activo',
+        categories: ['Harinas de Maíz y Trigo', 'Sacos y Graneles'],
+        createdAt: new Date().toISOString()
+      },
+      {
+        id: 'sub-mas-02',
+        warehouseId: 'wh-maseca',
+        code: 'MAS-GRA',
+        name: 'Maseca - Graneles y Materias Primas',
+        description: 'Silos y big bags de grano seleccionado y salvadillo para molienda.',
+        storageType: 'Patio / Material Pesado',
+        capacityBinsOrUnits: 900,
+        currentOccupancy: 620,
+        locationArea: 'Bahía Norte - Silos 1 a 3',
+        responsibleOperator: 'Ing. Elena Rivas',
+        status: 'Activo',
+        categories: ['Sacos y Graneles', 'Insumos Industriales'],
+        createdAt: new Date().toISOString()
+      }
+    ]
+  },
+  {
     id: 'wh-oxxo',
     code: 'OXXO',
     name: 'Almacén OXXO (Tiendas de Conveniencia)',
@@ -307,7 +360,23 @@ export function getStoredWarehouseSections(): WarehouseSection[] {
     const raw = localStorage.getItem('wms_warehouse_sections_v2');
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        // Ensure standard warehouses (like Maseca, OXXO, Transporte) are present
+        const existingIds = new Set(parsed.map((p: WarehouseSection) => p.id));
+        let changed = false;
+        DEFAULT_WAREHOUSE_SECTIONS.forEach(defSec => {
+          if (!existingIds.has(defSec.id)) {
+            parsed.push(defSec);
+            changed = true;
+          }
+        });
+        if (changed) {
+          try {
+            localStorage.setItem('wms_warehouse_sections_v2', JSON.stringify(parsed));
+          } catch (_) {}
+        }
+        return parsed;
+      }
     }
   } catch (e) {
     console.warn('Error reading warehouses from localStorage', e);
@@ -419,7 +488,9 @@ export const WarehouseSectionManager: React.FC<WarehouseSectionManagerProps> = (
     setWarehouses(updated);
     try {
       localStorage.setItem('wms_warehouse_sections_v2', JSON.stringify(updated));
-      window.dispatchEvent(new Event('wms_warehouses_updated'));
+      window.dispatchEvent(new CustomEvent('warehouse_sections_updated'));
+      window.dispatchEvent(new CustomEvent('wms_warehouses_updated'));
+      window.dispatchEvent(new Event('storage'));
     } catch (e) {
       console.error('Error saving warehouse sections:', e);
     }
